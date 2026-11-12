@@ -7,6 +7,8 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-13
+
 ### Added
 
 - `elbx tree`: one tree from the load balancer down to the targets, with the real target behind
@@ -82,11 +84,11 @@ incompatible change raises the minor version).
   `AWS_REGION` is reported as a missing region, with the same hint. `ELBClient(session=...,
   profile_name=...)` is a `ValueError`, and `region_name` applies to a given `session` instead
   of being ignored.
-- Logs: details that cannot be fetched are left empty as before, and now one note on stderr says
-  so, also when the command then fails. `-v` shows what could not be fetched and why, and `-vv` also every AWS API call and how long
-  it took. Logs go to stderr, never to stdout. In Python they are on the `elbx` logger of the
+- Logs: details that cannot be fetched are left empty, and one note on stderr says so, also
+  when the command then fails. `-v` shows what could not be fetched and why, and `-vv` also
+  every AWS API call and how long it took. Logs go to stderr, never to stdout. In Python they are on the `elbx` logger of the
   standard `logging` module, silent by default. Request parameters and headers are not logged, and
-  the debug log of botocore stays off. IAM server certificates are no longer looked up in ACM.
+  the debug log of botocore stays off. IAM server certificates are not looked up in ACM.
 - Input checks: `-j` / `--workers` must be 1 or more and `--max-targets` 0 or more, and
   `-H` needs a header name. An empty argument is an error instead of being taken as omitted
   (`elbx tree ""`, `elbx targets ""`, `elbx find ""`, `--lb ""`, `--source-ip ""`), and an
@@ -103,11 +105,11 @@ incompatible change raises the minor version).
   zone has no record with the host name itself (with `api.example.com` pointing at CloudFront,
   a request does not reach the load balancer of `*.example.com`).
 - `elbx find` matches an ARN by its name part (the function name, the load balancer name and
-  ID), so a region name, an account ID or `app` no longer matches every target; a query that
+  ID), so a region name, an account ID or `app` does not match every target; a query that
   starts with `arn:` is matched against the whole ARN.
 - An instance target is shown as an ECS task only when its port is a host port of the task,
   or when the host ports of the only task on that instance are unknown; another process on the
-  same instance is no longer taken for the task.
+  same instance is not taken for the task.
 - AWS API calls that are throttled are tried up to 10 times in the `standard` retry mode
   (the calls run in parallel, and one that keeps failing fails the whole command). The
   `AWS_RETRY_MODE` and `AWS_MAX_ATTEMPTS` environment variables are respected.
@@ -118,8 +120,9 @@ incompatible change raises the minor version).
   the code).
 - Route 53 names are shown as written (`*.example.com`, not `\052.example.com`).
 - `ELBClient`: `include_certificates`, `include_attributes`, `resolve_targets` and
-  `expand_downstream` choose what to fetch (the tables of `elbx targets` and `elbx find` no
-  longer read the target groups behind a downstream load balancer a second time), and `TargetGroupView.to_dict()` adds `by_state` and `attention` to `summary`.
+  `expand_downstream` choose what to fetch (the tables of `elbx targets` and `elbx find` do
+  not read the target groups behind a downstream load balancer a second time), and
+  `TargetGroupView.to_dict()` has `by_state` and `attention` in `summary`.
   `TargetLookupResult.load_balancer_name` is empty when no load balancer is known, in every
   language.
 - ECS clusters are read in parallel, and the tasks of a cluster only when an IP target or a
@@ -129,14 +132,13 @@ incompatible change raises the minor version).
   so their rows stay aligned.
 - `--color` colors the output when it is not a terminal (a pipe to `less -R`, a CI log); the
   `FORCE_COLOR` environment variable has the same effect and wins over `NO_COLOR`.
-- `elbx find` with part of an IP address (`10.0.1`) finds nothing, as before, and now a hint
-  says that an IP address is matched as a whole.
-- Python: `TargetView.downstream_lb` (was `alb`) holds the load balancer behind a target, an ALB
-  or an NLB (also the `downstream_lb` key of `to_dict()` and `--json`); `RouteHop.note_code`
+- `elbx find` with part of an IP address (`10.0.1`) finds nothing, and a hint says that an IP
+  address is matched as a whole.
+- Python: `TargetView.downstream_lb` holds the load balancer behind a target, an ALB or an NLB (also the `downstream_lb` key of `to_dict()` and `--json`); `RouteHop.note_code`
   (`no_listener` / `no_matching_rule` / `too_many_hops`, also in `--json`) tells why an
   evaluation stopped without parsing `note`; `TargetView.target_kind` is the `TargetKind`
   literal; `repr()` of a load balancer, a target group, a target or a hop is one short line. The
-  README examples pass `mypy --strict` as written, and the install instructions start with
-  `uv tool install` / `pipx install`.
+  README examples pass `mypy --strict` as written.
 
-[Unreleased]: https://github.com/gyuro-dev/elbx/commits/main
+[Unreleased]: https://github.com/gyuro-dev/elbx/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/gyuro-dev/elbx/releases/tag/v0.1.0
