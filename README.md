@@ -103,10 +103,10 @@ Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
 ## 🚀 Quick start
 
 ```bash
-uv tool install git+https://github.com/gyuro-dev/elbx.git    # or: pipx install git+https://github.com/gyuro-dev/elbx.git
+uv tool install elbx    # or: pipx install elbx
 ```
 
-To use it from Python, add it to your project: `uv add git+https://github.com/gyuro-dev/elbx.git` or `pip install git+https://github.com/gyuro-dev/elbx.git`.
+To use it from Python, add it to your project: `uv add elbx` or `pip install elbx`.
 
 ```bash
 elbx ls                                              # list the load balancers

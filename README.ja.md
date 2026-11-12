@@ -103,10 +103,10 @@ GET https://api.elbx-test.internal/v1/users
 ## 🚀 クイックスタート
 
 ```bash
-uv tool install git+https://github.com/gyuro-dev/elbx.git    # または pipx install git+https://github.com/gyuro-dev/elbx.git
+uv tool install elbx    # または pipx install elbx
 ```
 
-Python からも使うときは、プロジェクトに入れてください: `uv add git+https://github.com/gyuro-dev/elbx.git` か `pip install git+https://github.com/gyuro-dev/elbx.git`。
+Python からも使うときは、プロジェクトに入れてください: `uv add elbx` か `pip install elbx`。
 
 ```bash
 elbx ls                                              # ELB の一覧
