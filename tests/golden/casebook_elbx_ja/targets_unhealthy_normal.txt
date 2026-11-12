@@ -1,0 +1,7 @@
+# case: targets_unhealthy_normal
+# description: 平常時の --unhealthy はメッセージだけを出す。ヘルスチェックが無効な Lambda の unavailable と、ELB に使われていない TG の unused は調べる対象にしない
+# command: elbx targets --unhealthy --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+調べるべきターゲットはありません。

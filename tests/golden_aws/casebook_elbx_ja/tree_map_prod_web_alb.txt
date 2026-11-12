@@ -1,0 +1,46 @@
+# case: tree_map_prod_web_alb
+# description: 既定の関連図。リスナー → ルール（優先度と条件）→ TG（ヘルス集計）→ ターゲット名を 1 行ずつ。属性・SG・サブネット・ターゲットの詳細は出ない。下流の NLB はその場で展開される
+# command: elbx tree prod-web-alb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+[APPLICATION] prod-web-alb (internet-facing, active)
+│  api.elbx-test.internal, app.elbx-test.internal
+├── HTTP:80
+│   ├── [10] Path /health-http
+│   │   └── prod-web-tg [2/2 healthy]
+│   │       ├── ● web-prod-01
+│   │       └── ● web-prod-02
+│   └── [default]
+│       └── Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
+└── HTTPS:443  cert=*.elbx-test.internal
+    ├── [10] Host api.elbx-test.internal AND Path /v1/*
+    │   ├── prod-web-tg (weight=90) [2/2 healthy]
+    │   │   ├── ● web-prod-01
+    │   │   └── ● web-prod-02
+    │   └── prod-canary-tg (weight=10) [1/1 healthy]
+    │       └── ● canary-prod-01
+    ├── [20] Header(X-Env) ip-direct AND SourceIP 203.0.113.0/24 AND Query mode=fast AND Method POST, GET
+    │   └── prod-ip-tg [1/1 healthy]
+    │       └── ● web-prod-01 (ip)
+    ├── [25] Path /ecs/*
+    │   └── prod-ecs-tg [1/1 healthy]
+    │       └── ● ECS prod-ecs-cluster/api-fargate-svc (<ecs-task:api-fargate-svc>)
+    ├── [28] Path /auth/*
+    │   └── prod-lambda-tg [0/1 healthy, 1 unavailable]
+    │       └── ○ Lambda prod-auth-fn (unavailable)
+    ├── [29] Path /batch/*
+    │   └── alb-to-nlb-tg [1/1 healthy]
+    │       └── ● NLB batch-nlb (10.0.1.90)
+    │           └── TCP:9090
+    │               └── [default]
+    │                   └── batch-nlb-tg [1/1 healthy]
+    │                       └── ● batch-worker-01
+    ├── [30] Path /legacy/*
+    │   └── Redirect (HTTP_301) -> HTTPS://new.elbx-test.internal:443/modern
+    ├── [40] Path /maintenance
+    │   └── FixedResponse (503, text/plain)
+    └── [default]
+        └── prod-web-tg [2/2 healthy]
+            ├── ● web-prod-01
+            └── ● web-prod-02

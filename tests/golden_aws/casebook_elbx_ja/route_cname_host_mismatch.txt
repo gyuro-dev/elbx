@@ -1,0 +1,31 @@
+# case: route_cname_host_mismatch
+# description: CNAME の app.elbx-test.internal から ALB は特定できるが、Host 条件に合わず default へ
+# command: elbx route https://app.elbx-test.internal/v1/users --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://app.elbx-test.internal/v1/users
+
+入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Host 'app.elbx-test.internal' は [api.elbx-test.internal] のいずれにも一致しません
+  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
+      Header(X-Env) がリクエストにありません（-H で指定できます）
+      送信元IPが未指定のため不一致として扱いました（--source-ip で指定できます）
+      Query '(なし)' は [mode=fast] のいずれにも一致しません
+  ✗ Rule [priority:25] IF Path in [/ecs/*]
+      Path '/v1/users' は [/ecs/*] のいずれにも一致しません
+  ✗ Rule [priority:28] IF Path in [/auth/*]
+      Path '/v1/users' は [/auth/*] のいずれにも一致しません
+  ✗ Rule [priority:29] IF Path in [/batch/*]
+      Path '/v1/users' は [/batch/*] のいずれにも一致しません
+  ✗ Rule [priority:30] IF Path in [/legacy/*]
+      Path '/v1/users' は [/legacy/*] のいずれにも一致しません
+  ✗ Rule [priority:40] IF Path in [/maintenance]
+      Path '/v1/users' は [/maintenance] のいずれにも一致しません
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => Forward -> prod-web-tg
+     TG: prod-web-tg [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080

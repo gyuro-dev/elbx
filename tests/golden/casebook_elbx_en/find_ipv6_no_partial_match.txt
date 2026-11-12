@@ -1,0 +1,7 @@
+# case: find_ipv6_no_partial_match
+# description: IPv6 addresses match only as a whole; 2001:db8:1:1::3 does not match 2001:db8:1:1::31
+# command: elbx find 2001:db8:1:1::3 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No matching targets found.

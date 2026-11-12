@@ -1,0 +1,79 @@
+# case: route_json
+# description: the JSON of a route simulation
+# command: elbx route https://api.elbx-test.internal/v1/a --json
+# state: default
+# exit_code: 0
+----- stdout -----
+{
+  "url": "https://api.elbx-test.internal/v1/a",
+  "method": "GET",
+  "host": "api.elbx-test.internal",
+  "port": 443,
+  "path": "/v1/a",
+  "entries": [
+    {
+      "load_balancer_name": "prod-web-alb",
+      "load_balancer_arn": "<lb-arn:web_alb>",
+      "load_balancer_type": "application",
+      "port": 443,
+      "listener": "HTTPS:443",
+      "evaluations": [
+        {
+          "priority": "10",
+          "condition_text": "Host in [api.elbx-test.internal] AND Path in [/v1/*]",
+          "matched": true,
+          "reasons": [
+            "Host 'api.elbx-test.internal' matches [api.elbx-test.internal]",
+            "Path '/v1/a' matches [/v1/*]"
+          ]
+        }
+      ],
+      "matched_rule_priority": "10",
+      "actions_summary": [
+        "Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)"
+      ],
+      "target_groups": [
+        {
+          "name": "prod-web-tg",
+          "arn": "<tg-arn:web_tg>",
+          "weight": 90,
+          "health_summary": "2/2 healthy",
+          "targets": [
+            {
+              "display_name": "web-prod-01 (<i:web_01>)",
+              "target_kind": "ec2",
+              "port": 8080,
+              "health_state": "healthy",
+              "health_reason": ""
+            },
+            {
+              "display_name": "web-prod-02 (<i:web_02>)",
+              "target_kind": "ec2",
+              "port": 8080,
+              "health_state": "healthy",
+              "health_reason": ""
+            }
+          ]
+        },
+        {
+          "name": "prod-canary-tg",
+          "arn": "<tg-arn:canary_tg>",
+          "weight": 10,
+          "health_summary": "1/1 healthy",
+          "targets": [
+            {
+              "display_name": "canary-prod-01 (<i:canary_01>)",
+              "target_kind": "ec2",
+              "port": 8080,
+              "health_state": "healthy",
+              "health_reason": ""
+            }
+          ]
+        }
+      ],
+      "note": "",
+      "note_code": "",
+      "downstream": []
+    }
+  ]
+}

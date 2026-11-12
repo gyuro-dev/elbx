@@ -1,0 +1,18 @@
+# case: route_host_and_path
+# description: Host と Path の両方に一致し、重み付き転送（90 / 10）になる
+# command: elbx route https://api.elbx-test.internal/v1/users --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal/v1/users
+
+入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✓ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Host 'api.elbx-test.internal' は [api.elbx-test.internal] に一致
+      Path '/v1/users' は [/v1/*] に一致
+  => Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)
+     TG: prod-web-tg (weight=90) [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080
+     TG: prod-canary-tg (weight=10) [1/1 healthy]
+       - [● healthy] canary-prod-01 (<i:canary_01>) port=8080

@@ -1,0 +1,7 @@
+# case: find_lambda_runtime_not_matched
+# description: Lambda のランタイム名（python）ではヒットしない
+# command: elbx find python --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+該当するターゲットは見つかりませんでした。

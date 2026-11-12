@@ -1,0 +1,9 @@
+# case: route_unknown_host
+# description: a host name no load balancer serves is an error (and suggests --lb)
+# command: elbx route https://nowhere.example.org/ --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+Error: no load balancer serves the host name 'nowhere.example.org' (checked the Route 53 records and the load balancers' DNS names). Give the entry load balancer with --lb.

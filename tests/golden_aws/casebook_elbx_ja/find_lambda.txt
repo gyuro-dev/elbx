@@ -1,0 +1,9 @@
+# case: find_lambda
+# description: Lambda 関数名で検索
+# command: elbx find prod-auth-fn --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER  TARGET GROUP    KIND    TARGET ID                                                         RESOURCE / NAME                    PRIVATE IP  PORT  ELB HEALTH   STATE
+-------------  --------------  ------  ----------------------------------------------------------------  ---------------------------------  ----------  ----  -----------  ------
+prod-web-alb   prod-lambda-tg  lambda  arn:aws:lambda:ap-northeast-1:<account>:function:prod-auth-fn  Lambda: prod-auth-fn (python3.12)  -           -     unavailable  Active

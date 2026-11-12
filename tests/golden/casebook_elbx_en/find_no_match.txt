@@ -1,0 +1,7 @@
+# case: find_no_match
+# description: the message when nothing matches
+# command: elbx find unknown-resource-99 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No matching targets found.

@@ -1,0 +1,9 @@
+# case: find_downstream_alb
+# description: searching for a downstream ALB shows the NLB and the target group in front of it
+# command: elbx find prod-web-alb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER     TARGET GROUP   KIND  TARGET ID                                                                                                RESOURCE / NAME    PRIVATE IP  PORT  ELB HEALTH  STATE
+----------------  -------------  ----  -------------------------------------------------------------------------------------------------------  -----------------  ----------  ----  ----------  ------
+edge-ingress-nlb  nlb-to-alb-tg  alb   <lb-arn:web_alb>  ALB: prod-web-alb  -           443   healthy     active

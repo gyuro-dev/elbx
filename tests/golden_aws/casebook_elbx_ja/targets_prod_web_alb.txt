@@ -1,0 +1,15 @@
+# case: targets_prod_web_alb
+# description: ELB 配下のターゲット一覧。種別（ec2 / ecs / lambda / nlb）、AZ、サブネット、SG が出る
+# command: elbx targets prod-web-alb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+TARGET GROUP    KIND    TARGET ID                                                         RESOURCE / NAME                                                           PRIVATE IP  PORT  AZ               SUBNET                                       SECURITY GROUPS                      ELB HEALTH   STATE    REASON
+--------------  ------  ----------------------------------------------------------------  ------------------------------------------------------------------------  ----------  ----  ---------------  -------------------------------------------  -----------------------------------  -----------  -------  --------------------------
+alb-to-nlb-tg   nlb     10.0.1.90                                                         NLB: batch-nlb                                                            10.0.1.90   9090  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  batch-nlb-sg (<sg:batch_nlb_sg>)  healthy      active   -
+prod-canary-tg  ec2     <i:canary_01>                                               canary-prod-01                                                            10.0.1.21   8080  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)   healthy      running  -
+prod-ecs-tg     ecs     <ecs-ip:api-fargate-svc>                                                          ECS: prod-ecs-cluster/api-fargate-svc (<ecs-task:api-fargate-svc>)  <ecs-ip:api-fargate-svc>    9000  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)   healthy      RUNNING  -
+prod-ip-tg      ec2     10.0.1.11                                                         web-prod-01                                                               10.0.1.11   9000  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)   healthy      running  -
+prod-lambda-tg  lambda  arn:aws:lambda:ap-northeast-1:<account>:function:prod-auth-fn  Lambda: prod-auth-fn (python3.12)                                         -           -     -                public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)   unavailable  Active   Target.HealthCheckDisabled
+prod-web-tg     ec2     <i:web_01>                                               web-prod-01                                                               10.0.1.11   8080  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)   healthy      running  -
+prod-web-tg     ec2     <i:web_02>                                               web-prod-02                                                               10.0.2.12   8080  ap-northeast-1c  public-subnet-1c (<subnet:public_1c>)  prod-alb-sg (<sg:alb_sg>)   healthy      running  -

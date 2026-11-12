@@ -1,0 +1,9 @@
+# case: tree_unknown_lb
+# description: a load balancer name that does not exist is an error (exit code 1)
+# command: elbx tree missing-lb-name --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+Error: load balancer not found: missing-lb-name (An error occurred (LoadBalancerNotFound) when calling the DescribeLoadBalancers operation: Load balancers '[missing-lb-name]' not found)

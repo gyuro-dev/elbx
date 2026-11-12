@@ -1,0 +1,20 @@
+# case: route_path_wildcard
+# description: matches the * wildcard of Path (/ecs/*). The query is not part of the Path match
+# command: elbx route "https://api.elbx-test.internal/ecs/items?id=1" --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal/ecs/items?id=1
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Path '/ecs/items' matches none of [/v1/*]
+  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
+      Header(X-Env) is not in the request (give it with -H)
+      no source IP given, so taken as not matching (give it with --source-ip)
+      Query 'id=1' matches none of [mode=fast]
+  ✓ Rule [priority:25] IF Path in [/ecs/*]
+      Path '/ecs/items' matches [/ecs/*]
+  => Forward -> prod-ecs-tg
+     TG: prod-ecs-tg [1/1 healthy]
+       - [● healthy] ECS:prod-ecs-cluster/api-fargate-svc/<ecs-task:api-fargate-svc> port=9000

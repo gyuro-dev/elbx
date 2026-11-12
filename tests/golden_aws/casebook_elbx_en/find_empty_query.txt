@@ -1,0 +1,9 @@
+# case: find_empty_query
+# description: an empty search text is an error (it would match everything)
+# command: elbx find "" --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+Error: the search text is empty

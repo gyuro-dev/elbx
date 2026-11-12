@@ -1,0 +1,11 @@
+# case: find_partial_name
+# description: substring match. web-prod finds both web-prod-01 and web-prod-02
+# command: elbx find web-prod --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER  TARGET GROUP  KIND  TARGET ID            RESOURCE / NAME  PRIVATE IP  PORT  ELB HEALTH  STATE
+-------------  ------------  ----  -------------------  ---------------  ----------  ----  ----------  -------
+prod-web-alb   prod-ip-tg    ec2   10.0.1.11            web-prod-01      10.0.1.11   9000  healthy     running
+prod-web-alb   prod-web-tg   ec2   <i:web_01>  web-prod-01      10.0.1.11   8080  healthy     running
+prod-web-alb   prod-web-tg   ec2   <i:web_02>  web-prod-02      10.0.2.12   8080  healthy     running

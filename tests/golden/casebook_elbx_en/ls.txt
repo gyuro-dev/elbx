@@ -1,0 +1,12 @@
+# case: ls
+# description: every load balancer, with the listeners, the health count and Route 53 record names -> DNS name
+# command: elbx ls --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)  ROUTE53 / DNS NAME
+----------------  -----------  --------------------  ------  ---------------------  ------------------  -----------------------  -------------------------------------------------------------------------------------------------
+prod-web-alb      application  internet-facing       active  <vpc>  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+batch-nlb         network      internal              active  <vpc>  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  <vpc>  HTTP:80             3/3 (1 TGs)              v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com

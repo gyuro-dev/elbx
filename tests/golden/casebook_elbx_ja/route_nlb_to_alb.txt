@@ -1,0 +1,28 @@
+# case: route_nlb_to_alb
+# description: NLB の default ルールから下流の ALB に入り、/auth/* のルールで Lambda に届く
+# command: elbx route https://edge.elbx-test.internal/auth/login --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://edge.elbx-test.internal/auth/login
+
+入口: [NETWORK] edge-ingress-nlb (Listener TCP:443)
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => Forward -> nlb-to-alb-tg
+     TG: nlb-to-alb-tg [1/1 healthy]
+    ↓ 転送先: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+      ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+          Host 'edge.elbx-test.internal' は [api.elbx-test.internal] のいずれにも一致しません
+          Path '/auth/login' は [/v1/*] のいずれにも一致しません
+      ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+          Header(X-Env) がリクエストにありません（-H で指定できます）
+          Query '(なし)' は [mode=fast] のいずれにも一致しません
+          送信元IPが未指定のため不一致として扱いました（--source-ip で指定できます）
+      ✗ Rule [priority:25] IF Path in [/ecs/*]
+          Path '/auth/login' は [/ecs/*] のいずれにも一致しません
+      ✓ Rule [priority:28] IF Path in [/auth/*]
+          Path '/auth/login' は [/auth/*] に一致
+      => Forward -> prod-lambda-tg
+         TG: prod-lambda-tg [0/1 healthy, 1 unavailable]
+           - [○ unavailable] Lambda:prod-auth-fn port=- (Target.HealthCheckDisabled)

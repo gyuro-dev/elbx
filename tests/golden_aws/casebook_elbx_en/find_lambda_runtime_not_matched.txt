@@ -1,0 +1,7 @@
+# case: find_lambda_runtime_not_matched
+# description: the Lambda runtime name (python) does not match
+# command: elbx find python --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No matching targets found.

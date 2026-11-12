@@ -1,0 +1,9 @@
+# case: route_unsupported_scheme
+# description: http / https 以外のスキームはエラー
+# command: elbx route ftp://api.elbx-test.internal/ --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+エラー: リクエストを解釈できません: ftp://api.elbx-test.internal/ (http / https 以外のスキームには対応していません: ftp)

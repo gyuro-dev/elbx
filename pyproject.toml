@@ -1,0 +1,168 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elbx"
+dynamic = ["version"]
+description = "Read-only CLI and Python library that shows AWS ALB/NLB (ELBv2) trees with the real targets (EC2, ECS, Lambda, downstream ELBs), looks targets up, and simulates which listener rule a request matches"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "gyuro", email = "344015443+gyuro-dev@users.noreply.github.com" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Natural Language :: English",
+    "Natural Language :: Japanese",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+keywords = ["aws", "elb", "alb", "nlb", "load-balancer", "boto3", "cli", "troubleshooting"]
+dependencies = [
+    "boto3>=1.26.0",
+]
+
+[project.urls]
+Repository = "https://github.com/gyuro-dev/elbx"
+Issues = "https://github.com/gyuro-dev/elbx/issues"
+Changelog = "https://github.com/gyuro-dev/elbx/blob/main/CHANGELOG.md"
+
+[project.scripts]
+elbx = "elbx.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "pytest-html>=4.1.0",
+    "moto[elbv2,ec2,acm,ecs,awslambda,route53]>=5.0.0",
+    "pyyaml>=6.0",
+    "cryptography>=41.0",
+    "ruff>=0.8.0",
+    "mypy>=1.14.0",
+    "types-pyyaml>=6.0.12",
+    "pytest-casebook>=0.10.0",
+    "hypothesis>=6.100",
+]
+
+# バージョンは elbx/__init__.py の __version__ だけに書く
+[tool.setuptools.dynamic]
+version = { attr = "elbx.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["elbx*"]
+
+# 型の情報を持つパッケージであることを示す（PEP 561）
+[tool.setuptools.package-data]
+elbx = ["py.typed"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+    "RUF",  # Ruff-specific rules
+    "N",    # pep8-naming
+    "PT",   # flake8-pytest-style
+    "PIE",  # flake8-pie
+    "PTH",  # flake8-use-pathlib
+    "RET",  # flake8-return
+    "PERF", # Perflint
+    "PGH",  # pygrep-hooks
+    "ISC",  # flake8-implicit-str-concat
+    "TID",  # flake8-tidy-imports
+    "BLE",  # flake8-blind-except
+]
+ignore = [
+    "RUF001", # 日本語文字列中の全角記号許容
+    "RUF002", # 日本語docstring中の全角記号許容
+    "RUF003", # 日本語コメント中の全角記号許容
+]
+
+[tool.ruff.lint.per-file-ignores]
+# テストのスタブは boto3 の引数名（PascalCase / camelCase）をそのまま受け取る
+"tests/**" = ["N803", "N802"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["elbx", "scripts"]
+
+[[tool.mypy.overrides]]
+# boto3 / botocore は型の情報を持たない（クライアントは Any として扱う）
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--cov=elbx",
+    "--cov-report=term-missing",
+    "--cov-report=html:reports/coverage_html",
+    "--cov-report=xml:reports/coverage.xml",
+    "--junitxml=reports/junit.xml",
+    "--html=reports/pytest_report.html",
+    "--self-contained-html",
+    # ゴールデンテスト（tests/casebook_elbx_ja.yaml / casebook_elbx_en.yaml）の試験項目表
+    "--casebook-html=reports/casebook.html",
+]
+# pytest-casebook: 全体の表とメッセージの既定は日本語（英語の YAML は lang: en で英語）。
+# 期待出力は tests/golden/<YAML の名前>/
+# （elbx の出力の言語は、各 YAML の env: の ELBX_LANG で決める）
+# （実際の AWS は -o casebook_golden_dir=golden_aws で tests/golden_aws/<YAML の名前>/ に分ける）
+casebook_lang = "ja"
+# 期待出力ファイルに「何を確かめるか」（description）を書く。ファイル単体で読んでも分かるように
+casebook_golden_description = true
+# 試験項目表に期待出力の中身を出す。tree --full などは 80 行ほどあるので、全部出す
+casebook_html_golden = "full"
+# 全体の表（--casebook-html）のほかに、言語ごとの表も出す（枠と見出しは各 YAML の lang:）。
+# 実際の AWS の実行では -o casebook_html_reports= で出さない（moto の表を上書きしないように）
+casebook_html_reports = [
+    "reports/casebook_ja.html = tests/casebook_elbx_ja.yaml",
+    "reports/casebook_en.html = tests/casebook_elbx_en.yaml",
+]
+markers = [
+    "moto_only: moto だけで確認するケース（実際の AWS では作らない IPv6 の構成を使う）",
+]
+
+[tool.coverage.run]
+source = ["elbx"]
+omit = ["elbx/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

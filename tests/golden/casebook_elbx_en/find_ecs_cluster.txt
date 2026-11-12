@@ -1,0 +1,9 @@
+# case: find_ecs_cluster
+# description: search by ECS cluster name
+# command: elbx find prod-ecs-cluster --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER  TARGET GROUP  KIND  TARGET ID  RESOURCE / NAME                        PRIVATE IP  PORT  ELB HEALTH  STATE
+-------------  ------------  ----  ---------  -------------------------------------  ----------  ----  ----------  ------
+prod-web-alb   prod-ecs-tg   ecs   10.0.1.60  ECS: prod-ecs-cluster/api-fargate-svc  10.0.1.60   9000  healthy     ACTIVE

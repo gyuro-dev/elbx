@@ -1,0 +1,10 @@
+# case: route_invalid_source_ip
+# description: an invalid source IP is an error
+# command: elbx route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
+# state: default
+# exit_code: 2
+----- stdout -----
+
+----- stderr -----
+usage: elbx route URL [options]
+elbx route: error: argument --source-ip: give an IP address: not-an-ip

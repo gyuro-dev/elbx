@@ -1,0 +1,19 @@
+# case: route_all_conditions_match
+# description: matches all four conditions (header, method, query, source IP). Header names and values and the query are case-insensitive
+# command: elbx route "https://api.elbx-test.internal/x?Mode=FAST" -X POST -H "x-env: IP-Direct" --source-ip 203.0.113.5 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+POST https://api.elbx-test.internal/x?Mode=FAST
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Path '/x' matches none of [/v1/*]
+  ✓ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+      Header(X-Env) 'IP-Direct' matches [ip-direct]
+      Method 'POST' matches [GET, POST]
+      Query 'Mode=FAST' matches [mode=fast]
+      SourceIP '203.0.113.5' matches [203.0.113.0/24]
+  => Forward -> prod-ip-tg
+     TG: prod-ip-tg [1/1 healthy]
+       - [● healthy] web-prod-01 (10.0.1.11) port=9000

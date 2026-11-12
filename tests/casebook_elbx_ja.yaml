@@ -1,0 +1,319 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/gyuro-dev/pytest-casebook/main/src/pytest_casebook/casebook.schema.json
+# =============================================================================
+# 確認ケースの一覧（日本語の出力。pytest-casebook のケースファイル。ゴールデンテストと
+# playground の共通定義）
+#
+# 各ケースは tests/data/infra.yaml の構成（moto）に対して `elbx <command>` を実行し、その出力を
+# tests/golden/casebook_elbx_ja/<name>.txt（期待出力）と比較します。
+#
+# 英語の出力は tests/casebook_elbx_en.yaml で、同じケースを同じ順に書きます（説明だけが英語）。
+# ケースを足す・変えるときは両方を直します。ケース名・コマンド・状態・marks・meta と states が
+# 両方で同じことは tests/test_casebook_pair.py が確かめます。
+#
+#   name:        ケース名（期待出力のファイル名にもなる）
+#   description: このケースで何を確認するか（1行で書く）
+#   command:     elbx に渡す引数（シェルと同じ書き方。空白を含む値は引用符で囲む）
+#                "X-Env: ..." のように「: 」を含むときは、行全体を ' ' で囲む
+#   state:       ヘルス状態（下の states のどれか。省略時は default）
+#   meta.demo:   true のケースは `uv run python playground.py` を引数なしで実行したときにも表示する
+#   グループの marks: [moto_only] は、実際の AWS では作らない構成（IPv6）を使うケース。
+#                実際の AWS では -m "not moto_only" で除く
+#
+# 期待出力を作り直すとき: uv run pytest --casebook-update （差分を必ず確認する）
+# 試験項目表（HTML）:    reports/casebook.html（uv run pytest で毎回作られる）
+# 書き方の詳細:          https://github.com/gyuro-dev/pytest-casebook
+# =============================================================================
+
+title: elbx のゴールデンテスト
+description: tests/data/infra.yaml の構成を moto 上に作り、elbx の各コマンドの出力を確かめる
+levels:
+- コマンド
+# 試験項目表の枠と、このファイルのケースの失敗メッセージの言語（pytest-casebook の lang:）。
+# ini の casebook_lang も ja なので省略できるが、英語の YAML とそろっていることを
+# tests/test_casebook_pair.py で確かめるために書く
+lang: ja
+command_prefix: elbx
+# 出力の言語は日本語に固定する（既定は OS の言語で決まり、CI の Linux では英語になるため）
+env:
+  ELBX_LANG: ja
+# -----------------------------------------------------------------------------
+# ヘルス状態（states）
+#   moto は登録したターゲットを healthy として返すため、describe_target_health の結果を
+#   書き換えて障害状態を再現します（tests/conftest.py の pytest_casebook_run_command）。
+#   ただし実際の AWS に合わせて、ELB に使われていない TG のターゲットは unused、
+#   ヘルスチェックが無効な TG（Lambda の TG）のターゲットは unavailable にしています
+#   （tests/harness.py の _moto_target_health）。
+#   キーは EC2 の Name / IP / Lambda 関数名 / ELB 名、または "*"（全ターゲット）です。
+# -----------------------------------------------------------------------------
+states:
+  default: {}
+  incident:
+    web-prod-02:
+      state: unhealthy
+      reason: Target.FailedHealthChecks
+      description: 'Health checks failed with these codes: [502]'
+    canary-prod-01:
+      state: draining
+      reason: Target.DeregistrationInProgress
+      description: Target deregistration is in progress
+    prod-auth-fn:
+      state: initial
+      reason: Elb.RegistrationInProgress
+      description: Target registration is in progress
+  outage:
+    '*':
+      state: unhealthy
+      reason: Target.Timeout
+      description: Request timed out
+# -----------------------------------------------------------------------------
+# 確認ケース
+# -----------------------------------------------------------------------------
+cases:
+- group: 'ls: ELB 一覧'
+  description: 全 ELB の一覧表
+  cases:
+  - name: ls
+    description: 全 ELB の一覧。リスナー、ヘルス集計、Route 53 のレコード名 -> DNS 名が出る
+    command: ls --no-color
+    meta:
+      demo: true
+  - name: ls_no_dns
+    description: --no-dns では Route 53 を走査せず、DNS 名だけが出る
+    command: ls --no-dns --no-color
+  - name: ls_incident
+    description: 障害時の一覧。調べるべきターゲットの数が TARGETS の列に出る（ヘルスチェックが無効な Lambda は数えない）
+    command: ls --no-dns --no-color
+    state: incident
+- group: 'tree: 階層ツリー'
+  description: ELB → リスナー → ルール → TG → ターゲットのツリー
+  cases:
+  - name: tree_prod_web_alb
+    description: ALB の全階層。Route 53、ELB 属性、サブネット、SG（in/out）、2つのリスナーとルール、TG 属性、EC2 / IP->EC2 / ECS / Lambda / IP->NLB（NLB のノードの
+      IP から NLB の中まで展開）のターゲットとネットワーク情報が出る
+    command: tree prod-web-alb --full --no-color
+    meta:
+      demo: true
+  - name: tree_edge_nlb
+    description: NLB -> ALB の多段構成（target_type alb）が入れ子で展開される（下流は SG を省略）
+    command: tree edge-ingress-nlb --full --no-color
+  - name: tree_nlb_with_sg
+    description: SG を付けた NLB。Network & Security に NLB の SG（in/out）が出る
+    command: tree batch-nlb --full --no-color
+  - name: tree_no_network_no_dns
+    description: --full に --no-network / --no-dns を付けると、サブネット・SG・net 行・Route 53 が出ない
+    command: tree prod-web-alb --full --no-network --no-dns --no-color
+  - name: tree_incident
+    description: 障害時の全部出し。unhealthy / draining / initial のバッジと理由がターゲット行に出る
+    command: tree prod-web-alb --full --no-network --no-dns --no-color
+    state: incident
+  - name: tree_map_prod_web_alb
+    description: 既定の関連図。リスナー → ルール（優先度と条件）→ TG（ヘルス集計）→ ターゲット名を 1 行ずつ。属性・SG・サブネット・ターゲットの詳細は出ない。下流の NLB はその場で展開される
+    command: tree prod-web-alb --no-color
+    meta:
+      demo: true
+  - name: tree_map_edge_nlb
+    description: 関連図で下流の ALB は最初の 1 回だけ展開し、2 つ目のリスナーから同じ ALB を向くときは「上に展開済み」とだけ出す
+    command: tree edge-ingress-nlb --no-color
+    meta:
+      demo: true
+  - name: tree_map_incident_max_targets
+    description: 障害時の関連図。healthy 以外のターゲットが状態つきで先に出る。--max-targets 1 で healthy はまとめられるが、healthy 以外は必ず出る
+    command: tree prod-web-alb --max-targets 1 --no-color
+    state: incident
+    meta:
+      demo: true
+  - name: tree_search_no_match
+    description: 検索に一致する ELB がないときのメッセージ
+    command: tree --search no-such-lb --no-color
+  - name: tree_unknown_lb
+    description: 存在しない ELB 名はエラー（終了コード 1）
+    command: tree missing-lb-name --no-color
+  - name: tree_without_subcommand
+    description: サブコマンドを省略すると tree になり、tree のオプション（--max-targets・--search）も書ける
+    command: --max-targets 1 --search prod-web --no-color
+- group: 'targets: ターゲット一覧'
+  description: ターゲットの一覧表と --unhealthy
+  cases:
+  - name: targets_prod_web_alb
+    description: ELB 配下のターゲット一覧。種別（ec2 / ecs / lambda / nlb）、AZ、サブネット、SG が出る
+    command: targets prod-web-alb --no-color
+    meta:
+      demo: true
+  - name: targets_all
+    description: 全 TG のターゲット一覧。ELB に紐づかない orphan-unattached-tg（unused）と、ヘルスチェックが無効な Lambda（unavailable）も含む
+    command: targets --no-color
+  - name: targets_tg_alb
+    description: --tg で TG 名を指定。ターゲットが ALB の TG
+    command: targets --tg nlb-to-alb-tg --no-color
+  - name: targets_lambda_json
+    description: Lambda TG の JSON 出力（属性・ヘルス集計を含む）
+    command: targets --tg prod-lambda-tg --json
+  - name: targets_unhealthy_normal
+    description: 平常時の --unhealthy はメッセージだけを出す。ヘルスチェックが無効な Lambda の unavailable と、ELB に使われていない TG の unused は調べる対象にしない
+    command: targets --unhealthy --no-color
+  - name: targets_unhealthy_incident
+    description: 障害時の --unhealthy。調べるべきターゲットだけが DETAIL と HEALTH CHECK の列付きで出る
+    command: targets --unhealthy --no-color
+    state: incident
+    meta:
+      demo: true
+  - name: targets_unhealthy_outage
+    description: 全滅時の --unhealthy。全 TG の全ターゲットが Target.Timeout で出る
+    command: targets --unhealthy --no-color
+    state: outage
+  - name: targets_search_unhealthy
+    description: -s で名前にその文字列を含む TG だけにする（ここでは障害時の --unhealthy と組み合わせる）
+    command: targets -s prod-web --unhealthy --no-color
+    state: incident
+- group: 'find: 逆引き検索'
+  description: EC2・IP・ECS・Lambda・ELB からの逆引き
+  cases:
+  - name: find_ec2_name
+    description: EC2 の Name で検索。instance 登録と ip 登録の両方がヒットする
+    command: find web-prod-01 --no-color
+    meta:
+      demo: true
+  - name: find_partial_name
+    description: 部分一致。web-prod で web-prod-01 / web-prod-02 の両方がヒットする
+    command: find web-prod --no-color
+  - name: find_private_ip
+    description: プライベート IP で検索。instance 登録と ip 登録の両方がヒットする
+    command: find 10.0.1.11 --no-color
+  - name: find_ecs_service
+    description: ECS サービス名で検索
+    command: find api-fargate-svc --no-color
+  - name: find_ecs_cluster
+    description: ECS クラスター名で検索
+    command: find prod-ecs-cluster --no-color
+  - name: find_lambda
+    description: Lambda 関数名で検索
+    command: find prod-auth-fn --no-color
+  - name: find_downstream_alb
+    description: 下流 ALB 名で検索すると、上流の NLB と TG が分かる
+    command: find prod-web-alb --no-color
+  - name: find_nlb_ip_target
+    description: NLB 名で検索すると、その NLB のノードの IP を登録している ALB と TG が分かる
+    command: find batch-nlb --no-color
+  - name: find_unattached_tg
+    description: ELB に紐づかない TG のターゲットは "(ELB未アタッチ)" と出る
+    command: find standby-prod-01 --no-color
+  - name: find_lambda_runtime_not_matched
+    description: Lambda のランタイム名（python）ではヒットしない
+    command: find python --no-color
+  - name: find_no_match
+    description: 一致しないときのメッセージ
+    command: find unknown-resource-99 --no-color
+  - name: find_partial_ip_hint
+    description: IP アドレスの一部では見つからず、全体を書くようにヒントが出る
+    command: find 10.0.1 --no-color
+  - name: find_empty_query
+    description: 空の検索語はエラー（すべてに部分一致してしまうため）
+    command: find "" --no-color
+  - name: find_json
+    description: 逆引き結果の JSON 出力
+    command: find canary-prod-01 --json
+- group: 'route: ルーティング先のシミュレーション'
+  description: リクエストがどのリスナールールに一致し、どこへ届くか
+  cases:
+  - name: route_host_and_path
+    description: Host と Path の両方に一致し、重み付き転送（90 / 10）になる
+    command: route https://api.elbx-test.internal/v1/users --no-color
+  - name: route_cname_host_mismatch
+    description: CNAME の app.elbx-test.internal から ALB は特定できるが、Host 条件に合わず default へ
+    command: route https://app.elbx-test.internal/v1/users --no-color
+  - name: route_path_wildcard
+    description: Path の * ワイルドカード（/ecs/*）に一致する。クエリは Path の照合に含めない
+    command: route "https://api.elbx-test.internal/ecs/items?id=1" --no-color
+  - name: route_path_case_sensitive
+    description: Path は大文字小文字を区別するため /ECS/items は /ecs/* に一致しない
+    command: route https://api.elbx-test.internal/ECS/items --no-color
+  - name: route_host_case_insensitive
+    description: Host は大文字小文字を区別しない
+    command: route https://API.Elbx-Test.Internal/v1/x --no-color
+  - name: route_http_default_redirect
+    description: HTTP:80 リスナーの default ルールで HTTPS へリダイレクト
+    command: route http://api.elbx-test.internal/anything --no-color
+  - name: route_http_rule
+    description: HTTP:80 リスナーのルールで転送
+    command: route http://api.elbx-test.internal/health-http --no-color
+  - name: route_all_conditions_match
+    description: ヘッダー・メソッド・クエリ・送信元 IP の4条件すべてに一致する。ヘッダー名・値とクエリは大文字小文字を区別しない
+    command: 'route "https://api.elbx-test.internal/x?Mode=FAST" -X POST -H "x-env: IP-Direct" --source-ip 203.0.113.5 --no-color'
+    meta:
+      demo: true
+  - name: route_without_source_ip
+    description: --source-ip がないと source-ip 条件は不一致になり、その理由が出る
+    command: 'route "https://api.elbx-test.internal/x?mode=fast" -X POST -H "X-Env: ip-direct" --no-color'
+  - name: route_method_case_sensitive
+    description: HTTP メソッドは大文字小文字を区別するため post は POST に一致しない
+    command: 'route "https://api.elbx-test.internal/x?mode=fast" -X post -H "X-Env: ip-direct" --source-ip 203.0.113.5 --no-color'
+  - name: route_redirect_rule
+    description: ルールのアクションがリダイレクト
+    command: route https://api.elbx-test.internal/legacy/page --no-color
+  - name: route_nlb_to_alb
+    description: NLB の default ルールから下流の ALB に入り、/auth/* のルールで Lambda に届く
+    command: route https://edge.elbx-test.internal/auth/login --no-color
+    meta:
+      demo: true
+  - name: route_alb_to_nlb
+    description: ALB の /batch/* で NLB のノードの IP を登録した ip TG に届き、ENI から特定した NLB の default ルールで EC2 に届く
+    command: route https://api.elbx-test.internal/batch/run --no-color
+  - name: route_explicit_lb
+    description: --lb で入口を指定すれば、DNS に登録されていないホスト名でも評価できる
+    command: route https://unknown.invalid/maintenance --lb prod-web-alb --no-color
+  - name: route_host_header_override
+    description: -H で Host を指定すると、host-header 条件は URL のホスト名ではなくその値（ポートを除き、大文字小文字を区別しない）で評価される
+    command: 'route https://unknown.invalid/v1/x --lb prod-web-alb -H "Host: API.elbx-test.internal:8443" --no-color'
+  - name: route_no_listener
+    description: 該当ポートのリスナーがないときは、その旨と既存のリスナーが出る
+    command: route https://api.elbx-test.internal:8443/ --no-color
+  - name: route_incident
+    description: 障害時は転送先 TG のターゲットのヘルス状態（unhealthy / draining）も分かる
+    command: route https://api.elbx-test.internal/v1/users --no-color
+    state: incident
+  - name: route_json
+    description: ルーティング結果の JSON 出力
+    command: route https://api.elbx-test.internal/v1/a --json
+  - name: route_unknown_host
+    description: どの ELB も向いていないホスト名はエラー（--lb の指定を促す）
+    command: route https://nowhere.example.org/ --no-color
+  - name: route_unsupported_scheme
+    description: http / https 以外のスキームはエラー
+    command: route ftp://api.elbx-test.internal/ --no-color
+  - name: route_invalid_source_ip
+    description: 不正な送信元 IP はエラー
+    command: route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
+- group: 'IPv6: デュアルスタック / IPv6 only'
+  description: IPv6 の ELB・TG・ターゲット（実際の AWS では作らない構成のため moto だけで確認する）
+  marks:
+  - moto_only
+  meta:
+    moto_only: true
+  cases:
+  - name: tree_dualstack_alb
+    description: デュアルスタックの ALB。IPv6 の ip ターゲットが ENI から EC2 に、ENI のない IP はサブネットの IPv6 CIDR から AZ に解決され（IPv6 専用サブネットも含む）、SG
+      の IPv6 の送信元も出る
+    command: tree v6-dualstack-alb --full --no-color
+    meta:
+      demo: true
+  - name: targets_ipv6_tg
+    description: IPv6 の ip TG のターゲット一覧。IPv6 アドレスでも AZ・サブネット・SG が出る（IPv6 専用サブネットの IP も含む）
+    command: targets --tg prod-v6-ip-tg --no-color
+  - name: find_ipv6
+    description: IPv6 アドレスで逆引きすると、その IP を持つ EC2 のターゲットが見つかる
+    command: find 2001:db8:1:1::31 --no-color
+  - name: find_ipv6_expanded_uppercase
+    description: 省略しない書き方・大文字の IPv6 アドレスでも、同じアドレスとして一致する
+    command: find 2001:0DB8:0001:0001:0000:0000:0000:0031 --no-color
+  - name: find_ipv6_no_partial_match
+    description: IPv6 アドレスは完全一致だけで、2001:db8:1:1::3 は 2001:db8:1:1::31 に一致しない
+    command: find 2001:db8:1:1::3 --no-color
+  - name: find_ipv6_ip_only
+    description: どの ENI のものでもない IPv6 のターゲットも、IP の完全一致で見つかる
+    command: find 2001:db8:1:2::50 --no-color
+  - name: route_ipv6_source_ip
+    description: AAAA の Alias レコードから入口の ALB を特定し、IPv6 の送信元が source-ip 条件（IPv6 の CIDR）に一致する
+    command: route http://v6.elbx-test.internal/app --source-ip 2001:db8:1:1::99 --no-color
+  - name: route_ipv4_source_ip_on_ipv6_rule
+    description: IPv4 の送信元は IPv6 の CIDR の source-ip 条件に一致せず、default ルールになる
+    command: route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color

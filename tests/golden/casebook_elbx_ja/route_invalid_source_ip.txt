@@ -1,0 +1,10 @@
+# case: route_invalid_source_ip
+# description: 不正な送信元 IP はエラー
+# command: elbx route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
+# state: default
+# exit_code: 2
+----- stdout -----
+
+----- stderr -----
+使い方: elbx route URL [options]
+elbx route: エラー: 引数 --source-ip: IP アドレスを指定してください: not-an-ip

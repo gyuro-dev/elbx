@@ -1,0 +1,9 @@
+# case: find_unattached_tg
+# description: ELB に紐づかない TG のターゲットは "(ELB未アタッチ)" と出る
+# command: elbx find standby-prod-01 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER    TARGET GROUP          KIND  TARGET ID            RESOURCE / NAME  PRIVATE IP  PORT  ELB HEALTH  STATE
+---------------  --------------------  ----  -------------------  ---------------  ----------  ----  ----------  -------
+(ELB未アタッチ)  orphan-unattached-tg  ec2   <i:standby_01>  standby-prod-01  10.0.2.99   80    unused      running

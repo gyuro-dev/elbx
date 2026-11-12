@@ -1,0 +1,9 @@
+# case: targets_tg_alb
+# description: a target group name given with --tg; a target group whose target is an ALB
+# command: elbx targets --tg nlb-to-alb-tg --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+TARGET GROUP   KIND  TARGET ID                                                                                                RESOURCE / NAME    PRIVATE IP  PORT  AZ  SUBNET                                       SECURITY GROUPS                     ELB HEALTH  STATE   REASON
+-------------  ----  -------------------------------------------------------------------------------------------------------  -----------------  ----------  ----  --  -------------------------------------------  ----------------------------------  ----------  ------  ------
+nlb-to-alb-tg  alb   <lb-arn:web_alb>  ALB: prod-web-alb  -           443   -   public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)  healthy     active  -

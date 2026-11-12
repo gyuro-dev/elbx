@@ -1,0 +1,10 @@
+# case: route_no_listener
+# description: 該当ポートのリスナーがないときは、その旨と既存のリスナーが出る
+# command: elbx route https://api.elbx-test.internal:8443/ --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal:8443/
+
+入口: [APPLICATION] prod-web-alb (port 8443)
+  ! ポート 8443 のリスナーがありません（既存のリスナー: HTTP:80, HTTPS:443）

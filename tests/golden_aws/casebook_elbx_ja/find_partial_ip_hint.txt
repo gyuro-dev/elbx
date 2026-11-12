@@ -1,0 +1,9 @@
+# case: find_partial_ip_hint
+# description: IP アドレスの一部では見つからず、全体を書くようにヒントが出る
+# command: elbx find 10.0.1 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+該当するターゲットは見つかりませんでした。
+----- stderr -----
+ヒント: IP アドレスは全体でしか一致しません。アドレス全体（例: 10.0.1.11）を書くか、名前で検索してください。

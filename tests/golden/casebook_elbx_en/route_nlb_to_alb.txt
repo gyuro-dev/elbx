@@ -1,0 +1,28 @@
+# case: route_nlb_to_alb
+# description: from the default rule of the NLB into the downstream ALB, where the /auth/* rule reaches Lambda
+# command: elbx route https://edge.elbx-test.internal/auth/login --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://edge.elbx-test.internal/auth/login
+
+Entry: [NETWORK] edge-ingress-nlb (Listener TCP:443)
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => Forward -> nlb-to-alb-tg
+     TG: nlb-to-alb-tg [1/1 healthy]
+    ↓ Forwarded to: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+      ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+          Host 'edge.elbx-test.internal' matches none of [api.elbx-test.internal]
+          Path '/auth/login' matches none of [/v1/*]
+      ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+          Header(X-Env) is not in the request (give it with -H)
+          Query '(none)' matches none of [mode=fast]
+          no source IP given, so taken as not matching (give it with --source-ip)
+      ✗ Rule [priority:25] IF Path in [/ecs/*]
+          Path '/auth/login' matches none of [/ecs/*]
+      ✓ Rule [priority:28] IF Path in [/auth/*]
+          Path '/auth/login' matches [/auth/*]
+      => Forward -> prod-lambda-tg
+         TG: prod-lambda-tg [0/1 healthy, 1 unavailable]
+           - [○ unavailable] Lambda:prod-auth-fn port=- (Target.HealthCheckDisabled)

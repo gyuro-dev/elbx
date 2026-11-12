@@ -1,0 +1,138 @@
+# =============================================================================
+# 実際の ALB で確かめた、ルールの条件とリクエストの照合結果
+#
+# 2026-11-12 に ap-northeast-1 の ALB（HTTP:80 のリスナー）で確かめた。AWS の文書には、クエリや
+# パスをデコードして照合するかどうかの記述がないため、ここに記録した結果を elbx route の判定の
+# 基準にする（tests/test_inputs.py の test_route_matches_requests_as_a_real_alb_did が比べる）。
+#
+# 確かめ方: 下の rules を、ルールごとに違う本文を返す fixed-response のルールとして作り、
+# VPC 内の Lambda から ALB のノードに、requests の文字列をそのままリクエスト行に書いて送った。
+# 応答の本文（R<priority>）で、どのルールに一致したかが分かる。どれにも一致しなければ default。
+#
+# 分かったこと:
+#   - キーのある query-string 条件: クエリ文字列の全体の %XX を 1 回デコードしてから、& と最初の
+#     = で分けて照合する。+ は空白にならず + のまま。; では分けない。大文字小文字は区別しない
+#   - キーのない query-string 条件: デコード前のクエリ文字列の全体と照合する（どれかの値とではない）
+#   - path-pattern 条件: %XX を 1 回デコードし（%2F も / になる）、. と .. の部分を取り除いてから
+#     照合する。// と末尾の / はそのまま。大文字小文字は区別する
+#   - ルールの値には % と空白を書けない（CreateRule が ValidationError になる）
+# =============================================================================
+
+rules:
+  - { priority: 1, query: { key: "k0", value: "ok" } }
+  - { priority: 2, query: { key: "k1", value: "a/b" } }
+  - { priority: 3, query: { key: "k6", value: "a?b" } }
+  - { priority: 4, query: { key: "k7", value: "a???b" } }
+  - { priority: 5, query: { key: "k4", value: "a+b" } }
+  - { priority: 6, query: { key: "k8", value: "a&b" } }
+  - { priority: 7, query: { key: "x/y", value: "v" } }
+  - { priority: 8, path: "/qt/a+b" }
+  - { priority: 9, path: "/qt/x/y" }
+  - { priority: 11, path: "/qt/a?b" }
+  - { priority: 12, path: "/qt/a???b" }
+  - { priority: 13, query: { value: "solo" } }
+  - { priority: 14, query: { value: "*wild*" } }
+  - { priority: 15, query: { value: "p=q" } }
+
+# [リクエスト行に書いた文字列, 一致したルール（R<priority> / default）]
+requests:
+  - ["/?k0=ok", R1]
+  - ["/?k0=ng", default]
+  - ["/?k1=a/b", R2]
+  - ["/?k1=a%2Fb", R2]
+  - ["/?k1=a%2fb", R2]
+  - ["/?k4=a+b", R5]
+  - ["/?k4=a%2Bb", R5]
+  - ["/?k4=a%20b", default]
+  - ["/?x/y=v", R7]
+  - ["/?x%2Fy=v", R7]
+  - ["/?k6=a%20b", R3]
+  - ["/?k6=a+b", R3]
+  - ["/?k6=a%2520b", default]
+  - ["/?k7=a%20b", default]
+  - ["/?k7=a%2520b", R4]
+  - ["/?k8=a%26b", default]
+  - ["/?k8=a&b", default]
+  - ["/?k0=ng&k0=ok", R1]
+  - ["/?k0=ok&k0=ng", R1]
+  - ["/?K0=OK", R1]
+  - ["/?z=1;k0=ok", default]
+  - ["/?k0=o%6B", R1]
+  - ["/?k0=ok#frag", R1]
+  - ["/qt/a+b", R8]
+  - ["/qt/a%2Bb", R8]
+  - ["/qt/a%20b", R11]
+  - ["/qt/x/y", R9]
+  - ["/qt/x%2Fy", R9]
+  - ["/qt/x%2fy", R9]
+  - ["/qt/a%2520b", R12]
+  - ["/?zz=solo", default]
+  - ["/?solo=1", default]
+  - ["/?solo", R13]
+  - ["/?zz=so%6Co", default]
+  - ["/?z=1%26k0=ok", R1]
+  - ["/?k0%3Dok", R1]
+  - ["/?solo=", default]
+  - ["/?x=1&solo", default]
+  - ["/?SOLO", R13]
+  - ["/?k0=ok&", R1]
+  - ["/?&k0=ok", R1]
+  - ["/?k0=ok=1", default]
+  - ["/?k1=a%2Fb&k1=zz", R2]
+  - ["/qt/A+b", default]
+  - ["/qt/x//y", default]
+  - ["/qt/x/y/", default]
+  - ["/qt/x/./y", R9]
+  - ["/qt/z/../x/y", R9]
+  - ["/?k0=%6Fk", R1]
+  - ["/?%6B0=ok", R1]
+  - ["/?k4=a%2bb", R5]
+  - ["/?solo&x=1", default]
+  - ["/?=solo", default]
+  - ["/?x=1&=solo", default]
+  - ["/?solo&solo", default]
+  - ["/?wild", R14]
+  - ["/?a=1&wild=2", R14]
+  - ["/?a=wild", R14]
+  - ["/?a=1&b=xwildx", R14]
+  - ["/?xwildx", R14]
+  - ["/?a=1&xwildx", R14]
+  - ["/?=xwildx", R14]
+  - ["/?p=q", R15]
+  - ["/?p=q&z=1", default]
+  - ["/?z=1&p=q", default]
+  - ["/?p%3Dq", default]
+  - ["/?so%6Co", default]
+  - ["/?%77ild", default]
+  - ["/?a=%77ild", default]
+  - ["/?a=1&b=x%77ildx", default]
+  - ["/?p=%71", default]
+  - ["/?%70=q", default]
+  - ["/?wi%6Cd=1", default]
+  - ["/?k0=ok&wild", R1]
+  - ["/?", default]
+  - ["/", default]
+  - ["/?k0%3Dok%26z=1", R1]
+  - ["/?k0%3d%6Fk", R1]
+  - ["/qt/z/%2E%2E/x/y", R9]
+  - ["/qt/x/%2e/y", R9]
+  - ["/qt/x/y/.", default]
+  - ["/qt/x/y/z/..", default]
+  - ["/qt/x/y/z/../", default]
+  - ["/qt/x/z/../y", R9]
+  - ["//qt/x/y", default]
+  - ["/qt/x/y?", R9]
+  - ["/qt/x/y?a=1", R9]
+  - ["/qt/x/y%3Fa", default]
+  - ["/qt/x/y;p", default]
+  - ["/QT/x/y", default]
+  - ["/qt/a%3Fb", R11]
+  - ["/qt/a%2Fb", R11]
+  - ["/qt/a/b", R11]
+  - ["/qt/x%252Fy", default]
+  - ["/qt/x/y%2F", default]
+
+# ALB がルールを評価する前に 400 を返したリクエスト（elbx は判定の対象にしない）
+rejected:
+  - "/../qt/x/y"
+  - "/qt/x/y%00"

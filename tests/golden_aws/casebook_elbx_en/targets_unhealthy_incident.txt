@@ -1,0 +1,11 @@
+# case: targets_unhealthy_incident
+# description: --unhealthy during an incident. Only the targets that need attention, with the DETAIL and HEALTH CHECK columns
+# command: elbx targets --unhealthy --no-color
+# state: incident
+# exit_code: 0
+----- stdout -----
+TARGET GROUP    KIND    TARGET ID                                                         RESOURCE / NAME                    PRIVATE IP  PORT  AZ               SUBNET                                       SECURITY GROUPS                     ELB HEALTH  STATE    REASON                           DETAIL                                        HEALTH CHECK
+--------------  ------  ----------------------------------------------------------------  ---------------------------------  ----------  ----  ---------------  -------------------------------------------  ----------------------------------  ----------  -------  -------------------------------  --------------------------------------------  ------------------------------------------------------------------------------
+prod-canary-tg  ec2     <i:canary_01>                                               canary-prod-01                     10.0.1.21   8080  ap-northeast-1a  public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)  draining    running  Target.DeregistrationInProgress  Target deregistration is in progress          HTTP:traffic-port/healthz 200 every 10s (timeout 5s, unhealthy x2, healthy x2)
+prod-lambda-tg  lambda  arn:aws:lambda:ap-northeast-1:<account>:function:prod-auth-fn  Lambda: prod-auth-fn (python3.12)  -           -     -                public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)  initial     Active   Elb.RegistrationInProgress       Target registration is in progress            -
+prod-web-tg     ec2     <i:web_02>                                               web-prod-02                        10.0.2.12   8080  ap-northeast-1c  public-subnet-1c (<subnet:public_1c>)  prod-alb-sg (<sg:alb_sg>)  unhealthy   running  Target.FailedHealthChecks        Health checks failed with these codes: [502]  HTTP:traffic-port/healthz 200 every 10s (timeout 5s, unhealthy x2, healthy x2)

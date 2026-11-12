@@ -1,0 +1,9 @@
+# case: find_ipv6_expanded_uppercase
+# description: an IPv6 address written in full or in upper case matches as the same address
+# command: elbx find 2001:0DB8:0001:0001:0000:0000:0000:0031 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER     TARGET GROUP   KIND  TARGET ID         RESOURCE / NAME  PRIVATE IP        PORT  ELB HEALTH  STATE
+----------------  -------------  ----  ----------------  ---------------  ----------------  ----  ----------  -------
+v6-dualstack-alb  prod-v6-ip-tg  ec2   2001:db8:1:1::31  v6-web-01        2001:db8:1:1::31  8080  healthy     running

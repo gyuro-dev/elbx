@@ -1,0 +1,14 @@
+# case: route_http_default_redirect
+# description: HTTP:80 リスナーの default ルールで HTTPS へリダイレクト
+# command: elbx route http://api.elbx-test.internal/anything --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://api.elbx-test.internal/anything
+
+入口: [APPLICATION] prod-web-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF Path in [/health-http]
+      Path '/anything' は [/health-http] のいずれにも一致しません
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}

@@ -1,0 +1,9 @@
+# case: find_partial_ip_hint
+# description: part of an IP address finds nothing, and a hint says to give the whole address
+# command: elbx find 10.0.1 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No matching targets found.
+----- stderr -----
+Hint: an IP address only matches as a whole: give the whole address (e.g. 10.0.1.11) or search by name.

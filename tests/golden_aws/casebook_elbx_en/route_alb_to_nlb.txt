@@ -1,0 +1,29 @@
+# case: route_alb_to_nlb
+# description: /batch/* of the ALB reaches the ip target group with the NLB's node IP, and the default rule of the NLB found from the ENI reaches EC2
+# command: elbx route https://api.elbx-test.internal/batch/run --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal/batch/run
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Path '/batch/run' matches none of [/v1/*]
+  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
+      Header(X-Env) is not in the request (give it with -H)
+      no source IP given, so taken as not matching (give it with --source-ip)
+      Query '(none)' matches none of [mode=fast]
+  ✗ Rule [priority:25] IF Path in [/ecs/*]
+      Path '/batch/run' matches none of [/ecs/*]
+  ✗ Rule [priority:28] IF Path in [/auth/*]
+      Path '/batch/run' matches none of [/auth/*]
+  ✓ Rule [priority:29] IF Path in [/batch/*]
+      Path '/batch/run' matches [/batch/*]
+  => Forward -> alb-to-nlb-tg
+     TG: alb-to-nlb-tg [1/1 healthy]
+    ↓ Forwarded to: [NETWORK] batch-nlb (Listener TCP:9090)
+      ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+          no rule matched, so the default rule applies
+      => Forward -> batch-nlb-tg
+         TG: batch-nlb-tg [1/1 healthy]
+           - [● healthy] batch-worker-01 (<i:batch_01>) port=9090

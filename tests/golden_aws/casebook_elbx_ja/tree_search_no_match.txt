@@ -1,0 +1,7 @@
+# case: tree_search_no_match
+# description: 検索に一致する ELB がないときのメッセージ
+# command: elbx tree --search no-such-lb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+ロードバランサーが見つかりませんでした。

@@ -1,0 +1,9 @@
+# case: route_unknown_host
+# description: どの ELB も向いていないホスト名はエラー（--lb の指定を促す）
+# command: elbx route https://nowhere.example.org/ --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+エラー: ホスト名 'nowhere.example.org' を向いている ELB が見つかりません（Route 53 のレコードと ELB の DNS 名を確認しました）。--lb で入口の ELB を指定してください。

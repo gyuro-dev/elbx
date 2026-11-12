@@ -1,0 +1,18 @@
+# case: route_host_header_override
+# description: with Host given by -H, host-header conditions use its value (without the port, case-insensitive) instead of the host name of the URL
+# command: elbx route https://unknown.invalid/v1/x --lb prod-web-alb -H "Host: API.elbx-test.internal:8443" --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://unknown.invalid/v1/x
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✓ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Host 'api.elbx-test.internal' matches [api.elbx-test.internal]
+      Path '/v1/x' matches [/v1/*]
+  => Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)
+     TG: prod-web-tg (weight=90) [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080
+     TG: prod-canary-tg (weight=10) [1/1 healthy]
+       - [● healthy] canary-prod-01 (<i:canary_01>) port=8080

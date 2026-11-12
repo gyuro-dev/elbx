@@ -1,0 +1,10 @@
+# case: route_no_listener
+# description: when there is no listener on the port, it says so and shows the listeners
+# command: elbx route https://api.elbx-test.internal:8443/ --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal:8443/
+
+Entry: [APPLICATION] prod-web-alb (port 8443)
+  ! no listener on port 8443 (listeners: HTTP:80, HTTPS:443)

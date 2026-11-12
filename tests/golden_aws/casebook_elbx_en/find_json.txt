@@ -1,0 +1,139 @@
+# case: find_json
+# description: the JSON of a reverse lookup
+# command: elbx find canary-prod-01 --json
+# state: default
+# exit_code: 0
+----- stdout -----
+[
+  {
+    "load_balancer_name": "prod-web-alb",
+    "load_balancer_arn": "<lb-arn:web_alb>",
+    "load_balancer_dns": "<dns:web_alb>",
+    "target_group_name": "prod-canary-tg",
+    "target_group_arn": "<tg-arn:canary_tg>",
+    "target": {
+      "target_id": "<i:canary_01>",
+      "port": 8080,
+      "target_kind": "ec2",
+      "display_name": "canary-prod-01 (<i:canary_01>)",
+      "ip_address": "10.0.1.21",
+      "health_state": "healthy",
+      "health_reason": "",
+      "health_description": "",
+      "availability_zone": "ap-northeast-1a",
+      "subnet": {
+        "subnet_id": "<subnet:public_1a>",
+        "availability_zone": "ap-northeast-1a",
+        "name": "public-subnet-1a",
+        "cidr_block": "10.0.1.0/24",
+        "ipv6_cidr_blocks": [],
+        "load_balancer_addresses": []
+      },
+      "subnets": [
+        {
+          "subnet_id": "<subnet:public_1a>",
+          "availability_zone": "ap-northeast-1a",
+          "name": "public-subnet-1a",
+          "cidr_block": "10.0.1.0/24",
+          "ipv6_cidr_blocks": [],
+          "load_balancer_addresses": []
+        }
+      ],
+      "security_groups": [
+        {
+          "group_id": "<sg:alb_sg>",
+          "group_name": "prod-alb-sg",
+          "description": "Allow HTTP and HTTPS traffic from VPC",
+          "inbound_rules": [
+            {
+              "protocol": "ALL",
+              "port_range": "ALL",
+              "source_or_dest": "10.0.0.0/16",
+              "description": "All VPC internal"
+            },
+            {
+              "protocol": "TCP",
+              "port_range": "80-8080",
+              "source_or_dest": "10.0.0.0/16",
+              "description": "HTTP range from VPC"
+            },
+            {
+              "protocol": "TCP",
+              "port_range": "443",
+              "source_or_dest": "10.0.0.0/16",
+              "description": "HTTPS from VPC"
+            }
+          ],
+          "outbound_rules": [
+            {
+              "protocol": "ALL",
+              "port_range": "ALL",
+              "source_or_dest": "0.0.0.0/0",
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "ec2": {
+        "instance_id": "<i:canary_01>",
+        "name": "canary-prod-01",
+        "state": "running",
+        "private_ip": "10.0.1.21",
+        "public_ip": "",
+        "availability_zone": "ap-northeast-1a",
+        "instance_type": "t4g.nano",
+        "subnet_id": "<subnet:public_1a>",
+        "security_group_ids": [
+          "<sg:alb_sg>"
+        ],
+        "subnet": {
+          "subnet_id": "<subnet:public_1a>",
+          "availability_zone": "ap-northeast-1a",
+          "name": "public-subnet-1a",
+          "cidr_block": "10.0.1.0/24",
+          "ipv6_cidr_blocks": [],
+          "load_balancer_addresses": []
+        },
+        "security_groups": [
+          {
+            "group_id": "<sg:alb_sg>",
+            "group_name": "prod-alb-sg",
+            "description": "Allow HTTP and HTTPS traffic from VPC",
+            "inbound_rules": [
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "All VPC internal"
+              },
+              {
+                "protocol": "TCP",
+                "port_range": "80-8080",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTP range from VPC"
+              },
+              {
+                "protocol": "TCP",
+                "port_range": "443",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTPS from VPC"
+              }
+            ],
+            "outbound_rules": [
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "0.0.0.0/0",
+                "description": ""
+              }
+            ]
+          }
+        ]
+      },
+      "ecs": null,
+      "lambda_function": null,
+      "downstream_lb": null,
+      "eni": null
+    }
+  }
+]

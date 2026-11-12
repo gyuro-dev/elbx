@@ -1,0 +1,12 @@
+# case: ls_no_dns
+# description: --no-dns では Route 53 を走査せず、DNS 名だけが出る
+# command: elbx ls --no-dns --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)  ROUTE53 / DNS NAME
+----------------  -----------  --------------------  ------  ---------------------  ------------------  -----------------------  ---------------------------------------------------
+prod-web-alb      application  internet-facing       active  <vpc>  HTTP:80, HTTPS:443  6/7 (6 TGs)              prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)              edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+batch-nlb         network      internal              active  <vpc>  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  <vpc>  HTTP:80             3/3 (1 TGs)              v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com

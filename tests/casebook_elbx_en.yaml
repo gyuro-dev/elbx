@@ -1,0 +1,339 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/gyuro-dev/pytest-casebook/main/src/pytest_casebook/casebook.schema.json
+# =============================================================================
+# The cases with English output (a pytest-casebook case file, shared by the golden tests and
+# the playground)
+#
+# Every case runs `elbx <command>` against the configuration in tests/data/infra.yaml (on
+# moto) and compares its output with tests/golden/casebook_elbx_en/<name>.txt (the golden
+# file).
+#
+# The Japanese output is checked by tests/casebook_elbx_ja.yaml, with the same cases in the
+# same order (only the descriptions are in Japanese). When you add or change a case, change
+# both. tests/test_casebook_pair.py checks that the case names, commands, states, marks,
+# meta and the states section are the same in both.
+#
+#   name:        case name (also the name of the golden file)
+#   description: what the case checks (one line)
+#   command:     the arguments for elbx (as in a shell; quote values with spaces)
+#                quote the whole line with ' ' when it contains ": ", as in "X-Env: ..."
+#   state:       the health state (one of the states below; default when omitted)
+#   meta.demo:   true shows the case also when `uv run python playground.py` runs without
+#                arguments
+#   marks: [moto_only] on a group: the cases use a configuration that is not built on real
+#                AWS (IPv6). Leave them out on real AWS with -m "not moto_only"
+#
+# Rewrite the golden files: uv run pytest --casebook-update (always check the diff)
+# Test specification sheet: reports/casebook.html (written by every uv run pytest)
+# How to write cases:       https://github.com/gyuro-dev/pytest-casebook
+# =============================================================================
+
+title: elbx golden tests (English output)
+description: builds tests/data/infra.yaml on moto and checks the output of every elbx command
+levels:
+- Command
+# The language of the test specification sheet and of the failure messages of this file's
+# cases (pytest-casebook's lang:)
+lang: en
+command_prefix: elbx
+# The output is fixed to English (by default it follows the OS language)
+env:
+  ELBX_LANG: en
+# -----------------------------------------------------------------------------
+# Health states
+#   moto returns the registered targets as healthy, so the result of describe_target_health
+#   is rewritten to reproduce failures (pytest_casebook_run_command in tests/conftest.py).
+#   As on real AWS, though, the targets of a target group no load balancer uses are unused,
+#   and those of a target group with health checks disabled (the Lambda one) are
+#   unavailable (_moto_target_health in tests/harness.py).
+#   The keys are EC2 Names / IPs / Lambda function names / load balancer names, or "*"
+#   (every target).
+# -----------------------------------------------------------------------------
+states:
+  default: {}
+  incident:
+    web-prod-02:
+      state: unhealthy
+      reason: Target.FailedHealthChecks
+      description: 'Health checks failed with these codes: [502]'
+    canary-prod-01:
+      state: draining
+      reason: Target.DeregistrationInProgress
+      description: Target deregistration is in progress
+    prod-auth-fn:
+      state: initial
+      reason: Elb.RegistrationInProgress
+      description: Target registration is in progress
+  outage:
+    '*':
+      state: unhealthy
+      reason: Target.Timeout
+      description: Request timed out
+# -----------------------------------------------------------------------------
+# Cases
+# -----------------------------------------------------------------------------
+cases:
+- group: 'ls: list of load balancers'
+  description: the table of every load balancer
+  cases:
+  - name: ls
+    description: every load balancer, with the listeners, the health count and Route 53 record names -> DNS name
+    command: ls --no-color
+    meta:
+      demo: true
+  - name: ls_no_dns
+    description: with --no-dns, Route 53 is not scanned and only the DNS names are shown
+    command: ls --no-dns --no-color
+  - name: ls_incident
+    description: the list during an incident; the TARGETS column shows how many targets need attention (a Lambda with health checks disabled is not counted)
+    command: ls --no-dns --no-color
+    state: incident
+- group: 'tree: the tree'
+  description: the tree of load balancer → listeners → rules → target groups → targets
+  cases:
+  - name: tree_prod_web_alb
+    description: everything of an ALB. Route 53, attributes, subnets, SGs (in/out), two listeners and their rules,
+      target group attributes, and EC2 / IP->EC2 / ECS / Lambda / IP->NLB targets (from the NLB's node IP into the NLB)
+      with their network information
+    command: tree prod-web-alb --full --no-color
+    meta:
+      demo: true
+  - name: tree_edge_nlb
+    description: an NLB -> ALB chain (target_type alb) is expanded inside (the downstream one without SGs)
+    command: tree edge-ingress-nlb --full --no-color
+  - name: tree_nlb_with_sg
+    description: an NLB with an SG. Network & Security shows the NLB's SG (in/out)
+    command: tree batch-nlb --full --no-color
+  - name: tree_no_network_no_dns
+    description: --full with --no-network / --no-dns leaves out the subnets, SGs, net lines and Route 53
+    command: tree prod-web-alb --full --no-network --no-dns --no-color
+  - name: tree_incident
+    description: everything during an incident. The target lines show the unhealthy / draining / initial badges and the
+      reasons
+    command: tree prod-web-alb --full --no-network --no-dns --no-color
+    state: incident
+  - name: tree_map_prod_web_alb
+    description: the default relationship map. Listener → rule (priority and conditions) → target group (health count)
+      → target names, one line each. No attributes, SGs, subnets or target details. The downstream NLB is expanded in
+      place
+    command: tree prod-web-alb --no-color
+    meta:
+      demo: true
+  - name: tree_map_edge_nlb
+    description: in the relationship map the downstream ALB is expanded only the first time; when the second listener
+      points at the same ALB, it only says "expanded above"
+    command: tree edge-ingress-nlb --no-color
+    meta:
+      demo: true
+  - name: tree_map_incident_max_targets
+    description: the relationship map during an incident. Targets that are not healthy come first, with their state.
+      --max-targets 1 folds the healthy ones, but those that are not healthy are always shown
+    command: tree prod-web-alb --max-targets 1 --no-color
+    state: incident
+    meta:
+      demo: true
+  - name: tree_search_no_match
+    description: the message when no load balancer matches the search
+    command: tree --search no-such-lb --no-color
+  - name: tree_unknown_lb
+    description: a load balancer name that does not exist is an error (exit code 1)
+    command: tree missing-lb-name --no-color
+  - name: tree_without_subcommand
+    description: without a subcommand elbx runs tree, and the options of tree (--max-targets, --search) can be written
+    command: --max-targets 1 --search prod-web --no-color
+- group: 'targets: list of targets'
+  description: the table of targets and --unhealthy
+  cases:
+  - name: targets_prod_web_alb
+    description: the targets of a load balancer, with the kind (ec2 / ecs / lambda / nlb), AZ, subnet and SG
+    command: targets prod-web-alb --no-color
+    meta:
+      demo: true
+  - name: targets_all
+    description: the targets of every target group, including orphan-unattached-tg that is not attached to a load
+      balancer (unused) and the Lambda with health checks disabled (unavailable)
+    command: targets --no-color
+  - name: targets_tg_alb
+    description: a target group name given with --tg; a target group whose target is an ALB
+    command: targets --tg nlb-to-alb-tg --no-color
+  - name: targets_lambda_json
+    description: the JSON of a Lambda target group (with the attributes and the health count)
+    command: targets --tg prod-lambda-tg --json
+  - name: targets_unhealthy_normal
+    description: in normal times, --unhealthy prints only a message. A Lambda unavailable because health checks are
+      disabled and the unused targets of a target group no load balancer uses do not need attention
+    command: targets --unhealthy --no-color
+  - name: targets_unhealthy_incident
+    description: --unhealthy during an incident. Only the targets that need attention, with the DETAIL and HEALTH CHECK
+      columns
+    command: targets --unhealthy --no-color
+    state: incident
+    meta:
+      demo: true
+  - name: targets_unhealthy_outage
+    description: --unhealthy when everything is down. Every target of every target group, with Target.Timeout
+    command: targets --unhealthy --no-color
+    state: outage
+  - name: targets_search_unhealthy
+    description: -s keeps only the target groups whose name contains the text (here with --unhealthy during an
+      incident)
+    command: targets -s prod-web --unhealthy --no-color
+    state: incident
+- group: 'find: reverse lookup'
+  description: reverse lookup from EC2, IP, ECS, Lambda and load balancers
+  cases:
+  - name: find_ec2_name
+    description: search by EC2 Name. Both the instance target and the IP target are found
+    command: find web-prod-01 --no-color
+    meta:
+      demo: true
+  - name: find_partial_name
+    description: substring match. web-prod finds both web-prod-01 and web-prod-02
+    command: find web-prod --no-color
+  - name: find_private_ip
+    description: search by private IP. Both the instance target and the IP target are found
+    command: find 10.0.1.11 --no-color
+  - name: find_ecs_service
+    description: search by ECS service name
+    command: find api-fargate-svc --no-color
+  - name: find_ecs_cluster
+    description: search by ECS cluster name
+    command: find prod-ecs-cluster --no-color
+  - name: find_lambda
+    description: search by Lambda function name
+    command: find prod-auth-fn --no-color
+  - name: find_downstream_alb
+    description: searching for a downstream ALB shows the NLB and the target group in front of it
+    command: find prod-web-alb --no-color
+  - name: find_nlb_ip_target
+    description: searching for an NLB shows the ALB and the target group that register the NLB's node IP
+    command: find batch-nlb --no-color
+  - name: find_unattached_tg
+    description: a target in a target group not attached to a load balancer shows "(not attached to a load balancer)"
+    command: find standby-prod-01 --no-color
+  - name: find_lambda_runtime_not_matched
+    description: the Lambda runtime name (python) does not match
+    command: find python --no-color
+  - name: find_no_match
+    description: the message when nothing matches
+    command: find unknown-resource-99 --no-color
+  - name: find_partial_ip_hint
+    description: part of an IP address finds nothing, and a hint says to give the whole address
+    command: find 10.0.1 --no-color
+  - name: find_empty_query
+    description: an empty search text is an error (it would match everything)
+    command: find "" --no-color
+  - name: find_json
+    description: the JSON of a reverse lookup
+    command: find canary-prod-01 --json
+- group: 'route: route simulation'
+  description: which listener rule a request matches and where it ends up
+  cases:
+  - name: route_host_and_path
+    description: matches both Host and Path, and is forwarded with weights (90 / 10)
+    command: route https://api.elbx-test.internal/v1/users --no-color
+  - name: route_cname_host_mismatch
+    description: the ALB is found from the CNAME app.elbx-test.internal, but the Host condition does not match, so
+      default
+    command: route https://app.elbx-test.internal/v1/users --no-color
+  - name: route_path_wildcard
+    description: matches the * wildcard of Path (/ecs/*). The query is not part of the Path match
+    command: route "https://api.elbx-test.internal/ecs/items?id=1" --no-color
+  - name: route_path_case_sensitive
+    description: Path is case-sensitive, so /ECS/items does not match /ecs/*
+    command: route https://api.elbx-test.internal/ECS/items --no-color
+  - name: route_host_case_insensitive
+    description: Host is case-insensitive
+    command: route https://API.Elbx-Test.Internal/v1/x --no-color
+  - name: route_http_default_redirect
+    description: the default rule of the HTTP:80 listener redirects to HTTPS
+    command: route http://api.elbx-test.internal/anything --no-color
+  - name: route_http_rule
+    description: forwarded by a rule of the HTTP:80 listener
+    command: route http://api.elbx-test.internal/health-http --no-color
+  - name: route_all_conditions_match
+    description: matches all four conditions (header, method, query, source IP). Header names and values and the query
+      are case-insensitive
+    command: 'route "https://api.elbx-test.internal/x?Mode=FAST" -X POST -H "x-env: IP-Direct" --source-ip 203.0.113.5 --no-color'
+    meta:
+      demo: true
+  - name: route_without_source_ip
+    description: without --source-ip, the source-ip condition does not match, and the reason says so
+    command: 'route "https://api.elbx-test.internal/x?mode=fast" -X POST -H "X-Env: ip-direct" --no-color'
+  - name: route_method_case_sensitive
+    description: the HTTP method is case-sensitive, so post does not match POST
+    command: 'route "https://api.elbx-test.internal/x?mode=fast" -X post -H "X-Env: ip-direct" --source-ip 203.0.113.5 --no-color'
+  - name: route_redirect_rule
+    description: the action of the rule is a redirect
+    command: route https://api.elbx-test.internal/legacy/page --no-color
+  - name: route_nlb_to_alb
+    description: from the default rule of the NLB into the downstream ALB, where the /auth/* rule reaches Lambda
+    command: route https://edge.elbx-test.internal/auth/login --no-color
+    meta:
+      demo: true
+  - name: route_alb_to_nlb
+    description: /batch/* of the ALB reaches the ip target group with the NLB's node IP, and the default rule of the NLB
+      found from the ENI reaches EC2
+    command: route https://api.elbx-test.internal/batch/run --no-color
+  - name: route_explicit_lb
+    description: with --lb giving the entry, a host name not in DNS can be evaluated
+    command: route https://unknown.invalid/maintenance --lb prod-web-alb --no-color
+  - name: route_host_header_override
+    description: with Host given by -H, host-header conditions use its value (without the port, case-insensitive)
+      instead of the host name of the URL
+    command: 'route https://unknown.invalid/v1/x --lb prod-web-alb -H "Host: API.elbx-test.internal:8443" --no-color'
+  - name: route_no_listener
+    description: when there is no listener on the port, it says so and shows the listeners
+    command: route https://api.elbx-test.internal:8443/ --no-color
+  - name: route_incident
+    description: during an incident, the health of the targets of the target groups (unhealthy / draining) is shown too
+    command: route https://api.elbx-test.internal/v1/users --no-color
+    state: incident
+  - name: route_json
+    description: the JSON of a route simulation
+    command: route https://api.elbx-test.internal/v1/a --json
+  - name: route_unknown_host
+    description: a host name no load balancer serves is an error (and suggests --lb)
+    command: route https://nowhere.example.org/ --no-color
+  - name: route_unsupported_scheme
+    description: a scheme other than http / https is an error
+    command: route ftp://api.elbx-test.internal/ --no-color
+  - name: route_invalid_source_ip
+    description: an invalid source IP is an error
+    command: route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
+- group: 'IPv6: dual-stack / IPv6-only'
+  description: IPv6 load balancers, target groups and targets (checked only on moto, because this configuration is not
+    built on real AWS)
+  marks:
+  - moto_only
+  meta:
+    moto_only: true
+  cases:
+  - name: tree_dualstack_alb
+    description: a dual-stack ALB. IPv6 ip targets are resolved from the ENI to EC2, IPs without an ENI to an AZ from the
+      IPv6 CIDR of the subnets (including IPv6-only subnets), and the IPv6 sources of the SGs are shown
+    command: tree v6-dualstack-alb --full --no-color
+    meta:
+      demo: true
+  - name: targets_ipv6_tg
+    description: the targets of an IPv6 ip target group. AZ, subnet and SG are shown for IPv6 addresses too (including
+      IPs in IPv6-only subnets)
+    command: targets --tg prod-v6-ip-tg --no-color
+  - name: find_ipv6
+    description: a reverse lookup by IPv6 address finds the EC2 target with that IP
+    command: find 2001:db8:1:1::31 --no-color
+  - name: find_ipv6_expanded_uppercase
+    description: an IPv6 address written in full or in upper case matches as the same address
+    command: find 2001:0DB8:0001:0001:0000:0000:0000:0031 --no-color
+  - name: find_ipv6_no_partial_match
+    description: IPv6 addresses match only as a whole; 2001:db8:1:1::3 does not match 2001:db8:1:1::31
+    command: find 2001:db8:1:1::3 --no-color
+  - name: find_ipv6_ip_only
+    description: an IPv6 target that belongs to no ENI is found by the exact IP too
+    command: find 2001:db8:1:2::50 --no-color
+  - name: route_ipv6_source_ip
+    description: the entry ALB is found from an AAAA Alias record, and an IPv6 source matches the source-ip condition (an
+      IPv6 CIDR)
+    command: route http://v6.elbx-test.internal/app --source-ip 2001:db8:1:1::99 --no-color
+  - name: route_ipv4_source_ip_on_ipv6_rule
+    description: an IPv4 source does not match a source-ip condition with an IPv6 CIDR, so the default rule applies
+    command: route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color

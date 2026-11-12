@@ -1,0 +1,15 @@
+# case: route_http_rule
+# description: forwarded by a rule of the HTTP:80 listener
+# command: elbx route http://api.elbx-test.internal/health-http --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://api.elbx-test.internal/health-http
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTP:80)
+  ✓ Rule [priority:10] IF Path in [/health-http]
+      Path '/health-http' matches [/health-http]
+  => Forward -> prod-web-tg
+     TG: prod-web-tg [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080

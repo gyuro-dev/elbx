@@ -1,0 +1,9 @@
+# case: targets_search_unhealthy
+# description: -s で名前にその文字列を含む TG だけにする（ここでは障害時の --unhealthy と組み合わせる）
+# command: elbx targets -s prod-web --unhealthy --no-color
+# state: incident
+# exit_code: 0
+----- stdout -----
+TARGET GROUP  KIND  TARGET ID            RESOURCE / NAME  PRIVATE IP  PORT  AZ               SUBNET                                       SECURITY GROUPS                     ELB HEALTH  STATE    REASON                     DETAIL                                        HEALTH CHECK
+------------  ----  -------------------  ---------------  ----------  ----  ---------------  -------------------------------------------  ----------------------------------  ----------  -------  -------------------------  --------------------------------------------  ------------------------------------------------------------------------------
+prod-web-tg   ec2   <i:web_02>  web-prod-02      10.0.2.12   8080  ap-northeast-1c  public-subnet-1c (<subnet:public_1c>)  prod-alb-sg (<sg:alb_sg>)  unhealthy   running  Target.FailedHealthChecks  Health checks failed with these codes: [502]  HTTP:traffic-port/healthz 200 every 10s (timeout 5s, unhealthy x2, healthy x2)

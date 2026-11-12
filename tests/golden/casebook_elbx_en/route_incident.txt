@@ -1,0 +1,18 @@
+# case: route_incident
+# description: during an incident, the health of the targets of the target groups (unhealthy / draining) is shown too
+# command: elbx route https://api.elbx-test.internal/v1/users --no-color
+# state: incident
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal/v1/users
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✓ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Host 'api.elbx-test.internal' matches [api.elbx-test.internal]
+      Path '/v1/users' matches [/v1/*]
+  => Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)
+     TG: prod-web-tg (weight=90) [1/2 healthy, 1 unhealthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [✖ unhealthy] web-prod-02 (<i:web_02>) port=8080 (Target.FailedHealthChecks)
+     TG: prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
+       - [◐ draining] canary-prod-01 (<i:canary_01>) port=8080 (Target.DeregistrationInProgress)

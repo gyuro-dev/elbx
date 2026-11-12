@@ -1,0 +1,9 @@
+# case: route_unsupported_scheme
+# description: a scheme other than http / https is an error
+# command: elbx route ftp://api.elbx-test.internal/ --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+Error: cannot read the request: ftp://api.elbx-test.internal/ (only http and https are supported: ftp)

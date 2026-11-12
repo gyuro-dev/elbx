@@ -1,0 +1,9 @@
+# case: find_ipv6
+# description: a reverse lookup by IPv6 address finds the EC2 target with that IP
+# command: elbx find 2001:db8:1:1::31 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER     TARGET GROUP   KIND  TARGET ID         RESOURCE / NAME  PRIVATE IP        PORT  ELB HEALTH  STATE
+----------------  -------------  ----  ----------------  ---------------  ----------------  ----  ----------  -------
+v6-dualstack-alb  prod-v6-ip-tg  ec2   2001:db8:1:1::31  v6-web-01        2001:db8:1:1::31  8080  healthy     running

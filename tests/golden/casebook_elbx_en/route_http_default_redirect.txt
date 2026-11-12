@@ -1,0 +1,14 @@
+# case: route_http_default_redirect
+# description: the default rule of the HTTP:80 listener redirects to HTTPS
+# command: elbx route http://api.elbx-test.internal/anything --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://api.elbx-test.internal/anything
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF Path in [/health-http]
+      Path '/anything' matches none of [/health-http]
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}

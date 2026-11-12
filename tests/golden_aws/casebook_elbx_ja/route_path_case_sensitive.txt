@@ -1,0 +1,31 @@
+# case: route_path_case_sensitive
+# description: Path は大文字小文字を区別するため /ECS/items は /ecs/* に一致しない
+# command: elbx route https://api.elbx-test.internal/ECS/items --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://api.elbx-test.internal/ECS/items
+
+入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Path '/ECS/items' は [/v1/*] のいずれにも一致しません
+  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
+      Header(X-Env) がリクエストにありません（-H で指定できます）
+      送信元IPが未指定のため不一致として扱いました（--source-ip で指定できます）
+      Query '(なし)' は [mode=fast] のいずれにも一致しません
+  ✗ Rule [priority:25] IF Path in [/ecs/*]
+      Path '/ECS/items' は [/ecs/*] のいずれにも一致しません
+  ✗ Rule [priority:28] IF Path in [/auth/*]
+      Path '/ECS/items' は [/auth/*] のいずれにも一致しません
+  ✗ Rule [priority:29] IF Path in [/batch/*]
+      Path '/ECS/items' は [/batch/*] のいずれにも一致しません
+  ✗ Rule [priority:30] IF Path in [/legacy/*]
+      Path '/ECS/items' は [/legacy/*] のいずれにも一致しません
+  ✗ Rule [priority:40] IF Path in [/maintenance]
+      Path '/ECS/items' は [/maintenance] のいずれにも一致しません
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => Forward -> prod-web-tg
+     TG: prod-web-tg [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080

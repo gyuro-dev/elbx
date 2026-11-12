@@ -1,0 +1,10 @@
+# case: find_private_ip
+# description: search by private IP. Both the instance target and the IP target are found
+# command: elbx find 10.0.1.11 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER  TARGET GROUP  KIND  TARGET ID            RESOURCE / NAME  PRIVATE IP  PORT  ELB HEALTH  STATE
+-------------  ------------  ----  -------------------  ---------------  ----------  ----  ----------  -------
+prod-web-alb   prod-ip-tg    ec2   10.0.1.11            web-prod-01      10.0.1.11   9000  healthy     running
+prod-web-alb   prod-web-tg   ec2   <i:web_01>  web-prod-01      10.0.1.11   8080  healthy     running

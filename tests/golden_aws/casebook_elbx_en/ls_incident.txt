@@ -1,0 +1,11 @@
+# case: ls_incident
+# description: the list during an incident; the TARGETS column shows how many targets need attention (a Lambda with health checks disabled is not counted)
+# command: elbx ls --no-dns --no-color
+# state: incident
+# exit_code: 0
+----- stdout -----
+NAME              TYPE         SCHEME           STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
+----------------  -----------  ---------------  ------  ---------------------  ------------------  -------------------------  ------------------------------------------------------------------
+edge-ingress-nlb  network      internal         active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)                <dns:edge_nlb>
+batch-nlb         network      internal         active  <vpc>  TCP:9090            1/1 (1 TGs)                <dns:batch_nlb>
+prod-web-alb      application  internet-facing  active  <vpc>  HTTP:80, HTTPS:443  4/7 (6 TGs, attention: 3)  <dns:web_alb>

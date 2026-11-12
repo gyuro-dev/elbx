@@ -1,0 +1,9 @@
+# case: find_nlb_ip_target
+# description: searching for an NLB shows the ALB and the target group that register the NLB's node IP
+# command: elbx find batch-nlb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+LOAD BALANCER  TARGET GROUP   KIND  TARGET ID  RESOURCE / NAME  PRIVATE IP  PORT  ELB HEALTH  STATE
+-------------  -------------  ----  ---------  ---------------  ----------  ----  ----------  ------
+prod-web-alb   alb-to-nlb-tg  nlb   10.0.1.90  NLB: batch-nlb   10.0.1.90   9090  healthy     active

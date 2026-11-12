@@ -1,0 +1,7 @@
+# case: tree_search_no_match
+# description: the message when no load balancer matches the search
+# command: elbx tree --search no-such-lb --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No load balancers found.

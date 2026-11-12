@@ -1,0 +1,29 @@
+# case: route_method_case_sensitive
+# description: the HTTP method is case-sensitive, so post does not match POST
+# command: elbx route "https://api.elbx-test.internal/x?mode=fast" -X post -H "X-Env: ip-direct" --source-ip 203.0.113.5 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+post https://api.elbx-test.internal/x?mode=fast
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
+  ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+      Path '/x' matches none of [/v1/*]
+  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+      Method 'post' matches none of [GET, POST]
+  ✗ Rule [priority:25] IF Path in [/ecs/*]
+      Path '/x' matches none of [/ecs/*]
+  ✗ Rule [priority:28] IF Path in [/auth/*]
+      Path '/x' matches none of [/auth/*]
+  ✗ Rule [priority:29] IF Path in [/batch/*]
+      Path '/x' matches none of [/batch/*]
+  ✗ Rule [priority:30] IF Path in [/legacy/*]
+      Path '/x' matches none of [/legacy/*]
+  ✗ Rule [priority:40] IF Path in [/maintenance]
+      Path '/x' matches none of [/maintenance]
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => Forward -> prod-web-tg
+     TG: prod-web-tg [2/2 healthy]
+       - [● healthy] web-prod-01 (<i:web_01>) port=8080
+       - [● healthy] web-prod-02 (<i:web_02>) port=8080

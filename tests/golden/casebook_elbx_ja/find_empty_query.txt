@@ -1,0 +1,9 @@
+# case: find_empty_query
+# description: 空の検索語はエラー（すべてに部分一致してしまうため）
+# command: elbx find "" --no-color
+# state: default
+# exit_code: 1
+----- stdout -----
+
+----- stderr -----
+エラー: 検索キーワードが空です

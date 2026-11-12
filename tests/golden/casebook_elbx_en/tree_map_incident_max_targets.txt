@@ -1,0 +1,46 @@
+# case: tree_map_incident_max_targets
+# description: the relationship map during an incident. Targets that are not healthy come first, with their state. --max-targets 1 folds the healthy ones, but those that are not healthy are always shown
+# command: elbx tree prod-web-alb --max-targets 1 --no-color
+# state: incident
+# exit_code: 0
+----- stdout -----
+[APPLICATION] prod-web-alb (internet-facing, active)
+│  api.elbx-test.internal, app.elbx-test.internal
+├── HTTP:80
+│   ├── [10] Path /health-http
+│   │   └── prod-web-tg [1/2 healthy, 1 unhealthy]
+│   │       ├── ✖ web-prod-02 (unhealthy)
+│   │       └── … 1 more (healthy)
+│   └── [default]
+│       └── Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
+└── HTTPS:443  cert=*.elbx-test.internal
+    ├── [10] Host api.elbx-test.internal AND Path /v1/*
+    │   ├── prod-web-tg (weight=90) [1/2 healthy, 1 unhealthy]
+    │   │   ├── ✖ web-prod-02 (unhealthy)
+    │   │   └── … 1 more (healthy)
+    │   └── prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
+    │       └── ◐ canary-prod-01 (draining)
+    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    │   └── prod-ip-tg [1/1 healthy]
+    │       └── ● web-prod-01 (ip)
+    ├── [25] Path /ecs/*
+    │   └── prod-ecs-tg [1/1 healthy]
+    │       └── ● ECS prod-ecs-cluster/api-fargate-svc
+    ├── [28] Path /auth/*
+    │   └── prod-lambda-tg [0/1 healthy, 1 initial]
+    │       └── ◐ Lambda prod-auth-fn (initial)
+    ├── [29] Path /batch/*
+    │   └── alb-to-nlb-tg [1/1 healthy]
+    │       └── ● NLB batch-nlb (10.0.1.90)
+    │           └── TCP:9090
+    │               └── [default]
+    │                   └── batch-nlb-tg [1/1 healthy]
+    │                       └── ● batch-worker-01
+    ├── [30] Path /legacy/*
+    │   └── Redirect (HTTP_301) -> HTTPS://new.elbx-test.internal:443/modern
+    ├── [40] Path /maintenance
+    │   └── FixedResponse (503, text/plain)
+    └── [default]
+        └── prod-web-tg [1/2 healthy, 1 unhealthy]
+            ├── ✖ web-prod-02 (unhealthy)
+            └── … 1 more (healthy)

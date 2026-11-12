@@ -1,0 +1,58 @@
+# case: tree_no_network_no_dns
+# description: --full に --no-network / --no-dns を付けると、サブネット・SG・net 行・Route 53 が出ない
+# command: elbx tree prod-web-alb --full --no-network --no-dns --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+[APPLICATION] prod-web-alb (internet-facing, state=active, vpc=<vpc>)
+│  DNS: prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
+│  Attributes: cross_zone=off, deletion_protection=off
+└── Listeners (2)
+    ├── Listener HTTP:80
+    │   ├── Rule [priority:10] IF Path in [/health-http]
+    │   │   └── TG: prod-web-tg (HTTP:8080, type=instance, HC=HTTP:traffic-port/healthz) [2/2 healthy]
+    │   │       ├── attrs: dereg_delay=300s
+    │   │       ├── [● healthy] web-prod-01 [id=<i:web_01>, port=8080, ip=10.0.1.11, az=ap-northeast-1a, type=t3.medium, ec2=running]
+    │   │       └── [● healthy] web-prod-02 [id=<i:web_02>, port=8080, ip=10.0.2.12, az=ap-northeast-1c, type=t3.medium, ec2=running]
+    │   └── Rule [default] IF DEFAULT (すべての未一致リクエスト)
+    │       └── Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
+    └── Listener HTTPS:443 [SSLPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06]
+        ├── ACM Cert: *.elbx-test.internal (<cert:wildcard_cert>, status=PENDING_VALIDATION, expires=<date>)
+        ├── Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
+        │   ├── TG: prod-web-tg (weight=90) (HTTP:8080, type=instance, HC=HTTP:traffic-port/healthz) [2/2 healthy]
+        │   │   ├── attrs: dereg_delay=300s
+        │   │   ├── [● healthy] web-prod-01 [id=<i:web_01>, port=8080, ip=10.0.1.11, az=ap-northeast-1a, type=t3.medium, ec2=running]
+        │   │   └── [● healthy] web-prod-02 [id=<i:web_02>, port=8080, ip=10.0.2.12, az=ap-northeast-1c, type=t3.medium, ec2=running]
+        │   └── TG: prod-canary-tg (weight=10) (HTTP:8080, type=instance, HC=HTTP:traffic-port/healthz) [1/1 healthy]
+        │       ├── attrs: dereg_delay=300s
+        │       └── [● healthy] canary-prod-01 [id=<i:canary_01>, port=8080, ip=10.0.1.21, az=ap-northeast-1a, type=t3.small, ec2=running]
+        ├── Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+        │   └── TG: prod-ip-tg (HTTP:9000, type=ip, HC=HTTP:traffic-port/ping) [1/1 healthy]
+        │       ├── attrs: dereg_delay=300s
+        │       └── [● healthy] [IP->EC2] web-prod-01 [id=<i:web_01>, port=9000, ip=10.0.1.11, az=ap-northeast-1a, type=t3.medium, ec2=running]
+        ├── Rule [priority:25] IF Path in [/ecs/*]
+        │   └── TG: prod-ecs-tg (HTTP:9000, type=ip, HC=HTTP:traffic-port/ecs-health) [1/1 healthy]
+        │       ├── attrs: dereg_delay=300s
+        │       └── [● healthy] [ECS:FARGATE] prod-ecs-cluster/api-fargate-svc [port=9000, ip=10.0.1.60, container=api-container, def=api-fargate-task:1]
+        ├── Rule [priority:28] IF Path in [/auth/*]
+        │   └── TG: prod-lambda-tg (type=lambda) [0/1 healthy, 1 unavailable]
+        │       └── [○ unavailable] [Lambda] prod-auth-fn [runtime=python3.12, handler=index.handler, state=Active] (Target.HealthCheckDisabled: Health checks are not enabled for this target)
+        ├── Rule [priority:29] IF Path in [/batch/*]
+        │   └── TG: alb-to-nlb-tg (HTTP:9090, type=ip, HC=HTTP:traffic-port/) [1/1 healthy]
+        │       ├── attrs: dereg_delay=300s
+        │       └── [● healthy] [IP->NLB] batch-nlb [port=9090, ip=10.0.1.90, az=ap-northeast-1a, eni=<eni:batch_nlb_1a>, scheme=internal, state=active, dns=batch-nlb-1.ap-northeast-1.elb.amazonaws.com]
+        │           └── Listeners (1)
+        │               └── Listener TCP:9090
+        │                   └── Rule [default] IF DEFAULT (すべての未一致リクエスト)
+        │                       └── TG: batch-nlb-tg (TCP:9090, type=instance, HC=TCP:traffic-port) [1/1 healthy]
+        │                           ├── attrs: dereg_delay=300s
+        │                           └── [● healthy] batch-worker-01 [id=<i:batch_01>, port=9090, ip=10.0.1.71, az=ap-northeast-1a, type=t3.large, ec2=running]
+        ├── Rule [priority:30] IF Path in [/legacy/*]
+        │   └── Redirect (HTTP_301) -> HTTPS://new.elbx-test.internal:443/modern
+        ├── Rule [priority:40] IF Path in [/maintenance]
+        │   └── FixedResponse (503, text/plain)
+        └── Rule [default] IF DEFAULT (すべての未一致リクエスト)
+            └── TG: prod-web-tg (HTTP:8080, type=instance, HC=HTTP:traffic-port/healthz) [2/2 healthy]
+                ├── attrs: dereg_delay=300s
+                ├── [● healthy] web-prod-01 [id=<i:web_01>, port=8080, ip=10.0.1.11, az=ap-northeast-1a, type=t3.medium, ec2=running]
+                └── [● healthy] web-prod-02 [id=<i:web_02>, port=8080, ip=10.0.2.12, az=ap-northeast-1c, type=t3.medium, ec2=running]

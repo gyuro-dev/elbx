@@ -1,0 +1,7 @@
+# case: targets_unhealthy_normal
+# description: in normal times, --unhealthy prints only a message. A Lambda unavailable because health checks are disabled and the unused targets of a target group no load balancer uses do not need attention
+# command: elbx targets --unhealthy --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No targets need attention.

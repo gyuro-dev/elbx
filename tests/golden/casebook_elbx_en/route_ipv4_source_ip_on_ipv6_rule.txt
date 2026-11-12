@@ -1,0 +1,14 @@
+# case: route_ipv4_source_ip_on_ipv6_rule
+# description: an IPv4 source does not match a source-ip condition with an IPv6 CIDR, so the default rule applies
+# command: elbx route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://v6.elbx-test.internal/app
+
+Entry: [APPLICATION] v6-dualstack-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF SourceIP in [2001:db8:1::/56]
+      SourceIP '10.0.1.5' matches none of [2001:db8:1::/56]
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => FixedResponse (403, text/plain)

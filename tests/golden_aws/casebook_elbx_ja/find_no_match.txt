@@ -1,0 +1,7 @@
+# case: find_no_match
+# description: 一致しないときのメッセージ
+# command: elbx find unknown-resource-99 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+該当するターゲットは見つかりませんでした。
