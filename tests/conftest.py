@@ -156,6 +156,7 @@ def run_case_command(case: Case, env: TestEnv, argv: list[str]) -> CommandResult
     `os.environ` に当てているので、ここでは何もしない。
     実際の AWS で名前に prefix / suffix を付けたときは、コマンドの引数のうちリソースの名前と
     一致するものを、付けた名前に置き換えて実行する（出力は元の名前に戻して比較する）。
+    infra.yaml の IPv6 アドレスも、実際の AWS のアドレスに読み替える（`TestEnv.command_arg`）。
 
     :param case: casebook のケース
     :param env: moto または実際の AWS の環境
@@ -164,7 +165,7 @@ def run_case_command(case: Case, env: TestEnv, argv: list[str]) -> CommandResult
     """
     client = env.client()
     apply_health_overrides(client, env, case.state_data or {})
-    args = [env.command_names.get(arg, arg) for arg in argv[1:]]
+    args = [env.command_arg(arg) for arg in argv[1:]]
     return run_in_process(lambda a: cli.main(a, client=client), args)
 
 

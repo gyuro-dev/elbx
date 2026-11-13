@@ -10,7 +10,8 @@ moto 版（tests/harness.py）との主な違い:
 - internal NLB のノードの IP を load_balancer_enis の private_ip に固定する
 - EC2 には常にパブリック IP を付けない。サブネットもパブリック IP を自動で付けない
 - 証明書は自己署名のものを ACM にインポートし、パラメータ CertificateArn で受け取る
-- IPv6 の部分（moto_only: true のリソースと、サブネットの ipv6_cidr）は作らない
+- IPv6 は、Amazon が割り当てる /56 の中の、infra.yaml と同じ位置のアドレスで作る
+  （2001:db8:1:1::31 は、1 番目の /64 の ::31）。インターネットへの IPv6 の経路（::/0）は作らない
 """
 
 from __future__ import annotations
@@ -19,7 +20,14 @@ import json
 import re
 from typing import Any
 
-from tests.harness import _rule_action, _rule_conditions, for_real_aws
+from tests.harness import (
+    _rule_actions,
+    _rule_conditions,
+    action_specs,
+    for_real_aws,
+    instance_sg_keys,
+    ipv6_offset,
+)
 
 from .options import LAMBDA_ROLE_BASE_NAME, TAG_KEY, VPC_BASE_NAME, AwsOptions
 
@@ -98,9 +106,8 @@ def _instance_ports(infra: dict[str, Any], instance: dict[str, Any]) -> list[int
     for tg in infra["target_groups"]:
         if not tg.get("port"):
             continue
-        if instance["key"] in tg.get("instances", []) or instance["private_ip"] in tg.get(
-            "ips", []
-        ):
+        own_ips = {instance["private_ip"], *instance.get("ipv6_ips", [])}
+        if instance["key"] in tg.get("instances", []) or own_ips & set(tg.get("ips", [])):
             ports.add(int(tg["port"]))
     return sorted(ports)
 
@@ -116,12 +123,14 @@ def _user_data(infra: dict[str, Any], instance: dict[str, Any]) -> str:
     """
     files = " ".join(f"/srv/www/{p}" for p in _health_paths(infra))
     ports = " ".join(str(p) for p in _instance_ports(infra, instance))
+    # IPv6 のアドレスを持つインスタンスは、IPv6 でも待ち受ける（`::` は IPv4 も受ける）
+    bind = " --bind ::" if instance.get("ipv6_ips") else ""
     return (
         "#!/bin/bash\n"
         "mkdir -p /srv/www\n"
         f"touch {files}\n"
         f"for port in {ports}; do\n"
-        '  nohup python3 -m http.server "$port" --directory /srv/www >/dev/null 2>&1 &\n'
+        f'  nohup python3 -m http.server "$port"{bind} --directory /srv/www >/dev/null 2>&1 &\n'
         "done\n"
     )
 
@@ -173,6 +182,37 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
         },
     }
     output("VpcId", _ref("Vpc"))
+    # IPv6 の CIDR（/56）は Amazon が割り当てる。使うリソースは、割り当てが終わってから作る
+    # （Vpc の Ipv6CidrBlocks を読むだけでは、VpcIpv6 への依存にならないため DependsOn を付ける）
+    has_ipv6 = any(sub.get("ipv6_cidr") for sub in infra["subnets"])
+    vpc_ipv6_cidr: dict[str, Any] = {"Fn::Select": [0, _get_att("Vpc", "Ipv6CidrBlocks")]}
+    if has_ipv6:
+        resources["VpcIpv6"] = {
+            "Type": "AWS::EC2::VPCCidrBlock",
+            "Properties": {"VpcId": _ref("Vpc"), "AmazonProvidedIpv6CidrBlock": True},
+        }
+        output("VpcIpv6Cidr", vpc_ipv6_cidr)
+
+    def ipv6(value: str) -> Any:
+        """infra.yaml の IPv6 のアドレスか CIDR を、割り当てられた /56 の同じ位置を指す式にする。"""
+        if value == infra["vpc_ipv6_cidr"]:
+            return vpc_ipv6_cidr
+        sub = next(
+            s
+            for s in infra["subnets"]
+            if s.get("ipv6_cidr")
+            and ipv6_offset(infra, value) >> 64 == ipv6_offset(infra, s["ipv6_cidr"]) >> 64
+        )
+        host = ipv6_offset(infra, value) & (2**64 - 1)
+        if "/" in value or not 0 < host < 0x10000:
+            raise ValueError(f"infra.yaml: {value} は ::1〜::ffff の形のアドレスで書いてください")
+        # サブネットの CIDR "2406:da14:e5a:6f01::/64" の "::/64" より前に、"::31" を付ける
+        subnet_cidr = {
+            "Fn::Select": [0, _get_att(logical_id("Subnet", sub["key"]), "Ipv6CidrBlocks")]
+        }
+        prefix = {"Fn::Select": [0, {"Fn::Split": ["::/64", subnet_cidr]}]}
+        return {"Fn::Join": ["", [prefix, f"::{host:x}"]]}
+
     resources["Igw"] = {"Type": "AWS::EC2::InternetGateway", "Properties": {"Tags": tags()}}
     resources["IgwAttachment"] = {
         "Type": "AWS::EC2::VPCGatewayAttachment",
@@ -197,16 +237,27 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
     for idx, sub in enumerate(infra["subnets"]):
         lid = logical_id("Subnet", sub["key"])
         az = sub["az"] if same_region else {"Fn::Select": [idx, {"Fn::GetAZs": ""}]}
-        resources[lid] = {
-            "Type": "AWS::EC2::Subnet",
-            "Properties": {
-                "VpcId": _ref("Vpc"),
-                "CidrBlock": sub["cidr"],
-                "AvailabilityZone": az,
-                "MapPublicIpOnLaunch": False,
-                "Tags": tags(opts.name(sub["name"])),
-            },
+        sub_props: dict[str, Any] = {
+            "VpcId": _ref("Vpc"),
+            "AvailabilityZone": az,
+            "Tags": tags(opts.name(sub["name"])),
         }
+        if sub.get("cidr"):
+            sub_props["CidrBlock"] = sub["cidr"]
+            sub_props["MapPublicIpOnLaunch"] = False
+        resources[lid] = {"Type": "AWS::EC2::Subnet", "Properties": sub_props}
+        if sub.get("ipv6_cidr"):
+            # 割り当てられた /56 を /64 に分けた、infra.yaml と同じ番号のもの
+            sub_props["Ipv6CidrBlock"] = {
+                "Fn::Select": [
+                    ipv6_offset(infra, sub["ipv6_cidr"]) >> 64,
+                    {"Fn::Cidr": [vpc_ipv6_cidr, 256, "64"]},
+                ]
+            }
+            # IPv4 の cidr がなければ IPv6 専用のサブネット
+            if not sub.get("cidr"):
+                sub_props["Ipv6Native"] = True
+            resources[lid]["DependsOn"] = "VpcIpv6"
         resources[f"{lid}RouteAssoc"] = {
             "Type": "AWS::EC2::SubnetRouteTableAssociation",
             "Properties": {"SubnetId": _ref(lid), "RouteTableId": _ref("PublicRouteTable")},
@@ -227,7 +278,7 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
             if "cidr" in rule:
                 item["CidrIp"] = rule["cidr"]
             if "ipv6" in rule:
-                item["CidrIpv6"] = rule["ipv6"]
+                item["CidrIpv6"] = ipv6(rule["ipv6"])
             if rule.get("description"):
                 item["Description"] = rule["description"]
             ingress.append(item)
@@ -241,26 +292,29 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
                 "Tags": tags(opts.name(sg["name"])),
             },
         }
+        if any("ipv6" in rule for rule in sg.get("ingress", [])):
+            resources[lid]["DependsOn"] = "VpcIpv6"
         output(lid, _ref(lid))
     default_sg = logical_id("Sg", infra["security_groups"][0]["key"])
 
     # 4. EC2（パブリック IP は常に付けない）
     for inst in infra["ec2_instances"]:
         lid = logical_id("Instance", inst["key"])
+        interface: dict[str, Any] = {
+            "DeviceIndex": "0",
+            "SubnetId": _ref(logical_id("Subnet", inst["subnet"])),
+            "PrivateIpAddress": inst["private_ip"],
+            "GroupSet": [_ref(logical_id("Sg", key)) for key in instance_sg_keys(infra, inst)],
+            "AssociatePublicIpAddress": False,
+        }
+        if inst.get("ipv6_ips"):
+            interface["Ipv6Addresses"] = [{"Ipv6Address": ipv6(ip)} for ip in inst["ipv6_ips"]]
         resources[lid] = {
             "Type": "AWS::EC2::Instance",
             "Properties": {
                 "ImageId": EC2_IMAGE,
                 "InstanceType": EC2_INSTANCE_TYPE,
-                "NetworkInterfaces": [
-                    {
-                        "DeviceIndex": "0",
-                        "SubnetId": _ref(logical_id("Subnet", inst["subnet"])),
-                        "PrivateIpAddress": inst["private_ip"],
-                        "GroupSet": [_ref(default_sg)],
-                        "AssociatePublicIpAddress": False,
-                    }
-                ],
+                "NetworkInterfaces": [interface],
                 "MetadataOptions": {"HttpTokens": "required"},
                 "UserData": {"Fn::Base64": _user_data(infra, inst)},
                 "Tags": tags(opts.name(inst["name"])),
@@ -338,7 +392,7 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
             "Name": opts.name(lb["name"]),
             "Type": lb["type"],
             "Scheme": lb["scheme"],
-            "IpAddressType": "ipv4",
+            "IpAddressType": lb.get("ip_address_type", "ipv4"),
             "Tags": tags(opts.name(lb["name"])),
         }
         if lb["key"] in fixed_ips:
@@ -373,7 +427,7 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
                 "LoadBalancerArn": _ref(lid),
                 "Protocol": listener["protocol"],
                 "Port": listener["port"],
-                "DefaultActions": [_rule_action(listener["default_action"], tg_refs)],
+                "DefaultActions": _rule_actions(listener["default_action"], tg_refs),
             }
             if listener.get("ssl_policy"):
                 l_props["SslPolicy"] = listener["ssl_policy"]
@@ -389,15 +443,24 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
 
             for rule in listener.get("rules", []):
                 r_lid = f"{l_lid}Rule{rule['priority']}"
+                conditions = _rule_conditions(rule["conditions"])
                 resources[r_lid] = {
                     "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
                     "Properties": {
                         "ListenerArn": _ref(l_lid),
                         "Priority": rule["priority"],
-                        "Conditions": _rule_conditions(rule["conditions"]),
-                        "Actions": [_rule_action(rule["action"], tg_refs)],
+                        "Conditions": conditions,
+                        "Actions": _rule_actions(rule["action"], tg_refs),
                     },
                 }
+                # source-ip 条件の IPv6 の CIDR も、割り当てられたものに読み替える
+                for cond in conditions:
+                    values = cond.get("SourceIpConfig", {}).get("Values", [])
+                    if any(":" in value for value in values):
+                        cond["SourceIpConfig"]["Values"] = [
+                            ipv6(value) if ":" in value else value for value in values
+                        ]
+                        resources[r_lid]["DependsOn"] = "VpcIpv6"
                 for tg_key in _forward_targets(rule["action"]):
                     rule_id_by_tg.setdefault(tg_key, r_lid)
 
@@ -425,13 +488,17 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
             if hc_protocol in ("HTTP", "HTTPS"):
                 props["HealthCheckPath"] = tg.get("health_check_path", "/")
                 props["HealthCheckTimeoutSeconds"] = 5
+            if tg.get("ip_address_type"):
+                props["IpAddressType"] = tg["ip_address_type"]
 
         targets: list[dict[str, Any]] = [
             {"Id": _ref(logical_id("Instance", key)), "Port": port}
             for key in tg.get("instances", [])
         ]
         if tg["key"] not in ecs_tg_keys:  # ECS の TG はサービスがタスクの IP を登録する
-            targets += [{"Id": ip, "Port": port} for ip in tg.get("ips", [])]
+            targets += [
+                {"Id": ipv6(ip) if ":" in ip else ip, "Port": port} for ip in tg.get("ips", [])
+            ]
         for key in tg.get("lambdas", []):
             targets.append({"Id": _get_att(lambda_lids[key], "Arn")})
             depends_on.append(f"{lambda_lids[key]}ElbPermission")
@@ -562,19 +629,21 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
     }
 
 
-def _forward_targets(action: dict[str, Any]) -> list[str]:
+def _forward_targets(action: dict[str, Any] | list[dict[str, Any]]) -> list[str]:
     """
     `infra.yaml` のアクション定義が転送先とするターゲットグループの論理 `key` 一覧を返す。
 
-    :param action: infra.yaml のアクション定義辞書
+    :param action: infra.yaml のアクション定義（1 つの辞書か、順に行うアクションのリスト）
     :return: 転送先 TG の論理 key のリスト（`redirect` や `fixed_response` の場合は空リスト）
     """
-    ((kind, body),) = action.items()
-    if kind == "forward":
-        return [body]
-    if kind == "forward_weighted":
-        return list(body)
-    return []
+    targets: list[str] = []
+    for one in action_specs(action):
+        ((kind, body),) = one.items()
+        if kind == "forward":
+            targets.append(body)
+        elif kind == "forward_weighted":
+            targets += list(body)
+    return targets
 
 
 def template_body(infra: dict[str, Any], opts: AwsOptions) -> str:

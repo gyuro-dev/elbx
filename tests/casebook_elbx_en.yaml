@@ -19,8 +19,11 @@
 #   state:       the health state (one of the states below; default when omitted)
 #   meta.demo:   true shows the case also when `uv run python playground.py` runs without
 #                arguments
-#   marks: [moto_only] on a group: the cases use a configuration that is not built on real
-#                AWS (IPv6). Leave them out on real AWS with -m "not moto_only"
+#   marks: [moto_only] on a group: for cases that use a configuration that cannot be built on
+#                real AWS (none now; IPv6 is built on real AWS too). Leave them out on real AWS
+#                with -m "not moto_only"
+#   IPv6 addresses written in a command (2001:db8:1::/56) are read, on real AWS, as the address
+#   at the same position in the /56 that Amazon assigned
 #
 # Rewrite the golden files: uv run pytest --casebook-update (always check the diff)
 # Test specification sheet: reports/casebook.html (written by every uv run pytest)
@@ -169,6 +172,11 @@ cases:
     state: incident
     meta:
       demo: true
+  - name: targets_unhealthy_json
+    description: --unhealthy --json during an incident. `targets` holds only the targets that need attention, and
+      `summary` keeps the counts of the whole target group
+    command: targets prod-web-alb --unhealthy --json
+    state: incident
   - name: targets_unhealthy_outage
     description: --unhealthy when everything is down. Every target of every target group, with Target.Timeout
     command: targets --unhealthy --no-color
@@ -301,12 +309,7 @@ cases:
     description: an invalid source IP is an error
     command: route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
 - group: 'IPv6: dual-stack / IPv6-only'
-  description: IPv6 load balancers, target groups and targets (checked only on moto, because this configuration is not
-    built on real AWS)
-  marks:
-  - moto_only
-  meta:
-    moto_only: true
+  description: IPv6 load balancers, target groups and targets, and a listener that authenticates before it forwards
   cases:
   - name: tree_dualstack_alb
     description: a dual-stack ALB. IPv6 ip targets are resolved from the ENI to EC2, IPs without an ENI to an AZ from the
@@ -337,3 +340,7 @@ cases:
   - name: route_ipv4_source_ip_on_ipv6_rule
     description: an IPv4 source does not match a source-ip condition with an IPv6 CIDR, so the default rule applies
     command: route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color
+  - name: route_auth_then_forward
+    description: a listener that authenticates with OIDC and then forwards. Both the authentication (the issuer and
+      what happens to an unauthenticated request) and the target group are shown
+    command: route https://v6.elbx-test.internal/app --no-color

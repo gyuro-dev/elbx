@@ -469,7 +469,31 @@ def _outputs(session: Any, stack_name: str) -> dict[str, str]:
     return {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
 
 
-def wait_for_health(session: Any, tg_arns: list[str], ecs_tg_arns: list[str]) -> dict[str, str]:
+def never_healthy_targets(infra: dict[str, Any], env: TestEnv) -> set[str]:
+    """
+    healthy にならないと分かっているターゲットの ID（実際の AWS のアドレス）を返す。
+    どのリソースのものでもない IP（「ENI のない IP」を確かめるための IPv6 のターゲット）は、
+    ヘルスチェックに応える相手がいないので、いつまでも `unhealthy` のままになる。
+
+    :param infra: infra.yaml のデータ辞書
+    :param env: 実際の AWS の環境（IPv6 の読み替えに使う）
+    :return: ターゲットの ID の集合
+    """
+    owned = {ip for inst in infra["ec2_instances"] for ip in inst.get("ipv6_ips", [])}
+    return {
+        env.real_ipv6(ip)
+        for tg in infra["target_groups"]
+        for ip in tg.get("ips", [])
+        if ":" in ip and ip not in owned
+    }
+
+
+def wait_for_health(
+    session: Any,
+    tg_arns: list[str],
+    ecs_tg_arns: list[str],
+    never_healthy: set[str] | None = None,
+) -> dict[str, str]:
     """
     全ターゲットグループのヘルス状態が落ち着くまで待機する
     （`initial` / `unhealthy` がなくなり、ECS サービスのタスクがターゲット登録されるまで）。
@@ -478,8 +502,11 @@ def wait_for_health(session: Any, tg_arns: list[str], ecs_tg_arns: list[str]) ->
     :param session: boto3.Session インスタンス
     :param tg_arns: 監視対象の全ターゲットグループ ARN のリスト
     :param ecs_tg_arns: ECS タスクが登録されるターゲットグループ ARN のリスト
+    :param never_healthy: healthy にならないと分かっているターゲットの ID
+        （`unhealthy` になった時点で落ち着いたとみなす）
     :return: `"<TG名> <ターゲットID>"` -> ヘルス状態文字列の辞書
     """
+    never_healthy = never_healthy or set()
     elbv2 = session.client("elbv2")
     deadline = time.monotonic() + HEALTH_WAIT_SECONDS
     _log("ターゲットのヘルスが落ち着くのを待っています")
@@ -496,7 +523,12 @@ def wait_for_health(session: Any, tg_arns: list[str], ecs_tg_arns: list[str]) ->
             elbv2.describe_target_health(TargetGroupArn=arn)["TargetHealthDescriptions"]
             for arn in ecs_tg_arns
         )
-        unsettled = {k: v for k, v in states.items() if v not in _SETTLED_STATES}
+        unsettled = {
+            k: v
+            for k, v in states.items()
+            if v not in _SETTLED_STATES
+            and not (v == "unhealthy" and k.split(" ", 1)[1] in never_healthy)
+        }
         if not unsettled and ecs_ready:
             _log("ヘルスが落ち着きました")
             return states
@@ -522,6 +554,7 @@ def _build_test_env(
     out = _outputs(session, opts.stack_name)
     env = TestEnv(session=session, region=opts.region, infra=infra)
     env.vpc_id = out["VpcId"]
+    env.real_vpc_ipv6_cidr = out.get("VpcIpv6Cidr", "")
     env.subnet_ids = {s["key"]: out[logical_id("Subnet", s["key"])] for s in infra["subnets"]}
     env.sg_ids = {sg["key"]: out[logical_id("Sg", sg["key"])] for sg in infra["security_groups"]}
     env.instance_ids = {
@@ -660,9 +693,14 @@ def aws_environment(opts: AwsOptions, infra: dict[str, Any] | None = None) -> It
 
         # ECS のタスクの ID・IP・ENI は、タスクが TG に登録されてから集める
         # （CloudFormation はタスクの起動を待たずにサービスを作成済みにすることがある）
-        tg_arns = _tg_arns(_outputs(session, opts.stack_name), infra)
+        out = _outputs(session, opts.stack_name)
+        tg_arns = _tg_arns(out, infra)
         ecs_tgs = [tg_arns[c["target_group"]] for c in infra.get("ecs_clusters", [])]
-        wait_for_health(session, list(tg_arns.values()), ecs_tgs)
+        ipv6_env = TestEnv(session=session, region=opts.region, infra=infra)
+        ipv6_env.real_vpc_ipv6_cidr = out.get("VpcIpv6Cidr", "")
+        wait_for_health(
+            session, list(tg_arns.values()), ecs_tgs, never_healthy_targets(infra, ipv6_env)
+        )
         yield _build_test_env(session, opts, infra, cert_arn)
     finally:
         if opts.keep_stack:

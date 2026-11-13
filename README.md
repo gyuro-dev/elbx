@@ -998,7 +998,7 @@ flowchart LR
     ALB6 -->|"IPv6 ip TG"| V6["EC2 v6-web-01 / IPv6 IPs"]
 ```
 
-The IPv6 parts (the dual-stack ALB and so on) are built only on moto (on real AWS, Amazon assigns the IPv6 CIDRs, so fixed addresses cannot be used).
+The IPv6 parts (the dual-stack ALB and so on) are written with the documentation prefix `2001:db8:1::/56`. On real AWS they are built at the same positions in the /56 that Amazon assigns.
 
 #### Tests on real AWS (this costs money)
 

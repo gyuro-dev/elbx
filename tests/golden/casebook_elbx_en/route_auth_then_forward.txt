@@ -1,0 +1,16 @@
+# case: route_auth_then_forward
+# description: a listener that authenticates with OIDC and then forwards. Both the authentication (the issuer and what happens to an unauthenticated request) and the target group are shown
+# command: elbx route https://v6.elbx-test.internal/app --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET https://v6.elbx-test.internal/app
+
+Entry: [APPLICATION] v6-dualstack-alb (Listener HTTPS:443)
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => AuthenticateOidc (issuer=https://idp.elbx-test.internal, on_unauthenticated=authenticate), Forward -> prod-v6-ip-tg
+     TG: prod-v6-ip-tg [3/3 healthy]
+       - [● healthy] 2001:db8:1:2::50 port=8080
+       - [● healthy] 2001:db8:1:3::50 port=8080
+       - [● healthy] v6-web-01 (2001:db8:1:1::31) port=8080

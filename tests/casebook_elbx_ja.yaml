@@ -16,8 +16,10 @@
 #                "X-Env: ..." のように「: 」を含むときは、行全体を ' ' で囲む
 #   state:       ヘルス状態（下の states のどれか。省略時は default）
 #   meta.demo:   true のケースは `uv run python playground.py` を引数なしで実行したときにも表示する
-#   グループの marks: [moto_only] は、実際の AWS では作らない構成（IPv6）を使うケース。
-#                実際の AWS では -m "not moto_only" で除く
+#   グループの marks: [moto_only] は、実際の AWS では作れない構成を使うケースに付ける
+#                （今はない。IPv6 も実際の AWS で作る）。実際の AWS では -m "not moto_only" で除く
+#   コマンドに書いた IPv6 アドレス（2001:db8:1::/56）は、実際の AWS では、割り当てられた /56 の
+#   同じ位置のアドレスに読み替えて実行する
 #
 # 期待出力を作り直すとき: uv run pytest --casebook-update （差分を必ず確認する）
 # 試験項目表（HTML）:    reports/casebook.html（uv run pytest で毎回作られる）
@@ -157,6 +159,10 @@ cases:
     state: incident
     meta:
       demo: true
+  - name: targets_unhealthy_json
+    description: 障害時の --unhealthy --json。targets は調べるべきターゲットだけに絞られ、summary は TG 全体の件数のまま
+    command: targets prod-web-alb --unhealthy --json
+    state: incident
   - name: targets_unhealthy_outage
     description: 全滅時の --unhealthy。全 TG の全ターゲットが Target.Timeout で出る
     command: targets --unhealthy --no-color
@@ -284,11 +290,7 @@ cases:
     description: 不正な送信元 IP はエラー
     command: route https://api.elbx-test.internal/ --source-ip not-an-ip --no-color
 - group: 'IPv6: デュアルスタック / IPv6 only'
-  description: IPv6 の ELB・TG・ターゲット（実際の AWS では作らない構成のため moto だけで確認する）
-  marks:
-  - moto_only
-  meta:
-    moto_only: true
+  description: IPv6 の ELB・TG・ターゲットと、認証してから転送するリスナー
   cases:
   - name: tree_dualstack_alb
     description: デュアルスタックの ALB。IPv6 の ip ターゲットが ENI から EC2 に、ENI のない IP はサブネットの IPv6 CIDR から AZ に解決され（IPv6 専用サブネットも含む）、SG
@@ -317,3 +319,6 @@ cases:
   - name: route_ipv4_source_ip_on_ipv6_rule
     description: IPv4 の送信元は IPv6 の CIDR の source-ip 条件に一致せず、default ルールになる
     command: route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color
+  - name: route_auth_then_forward
+    description: OIDC で認証してから転送するリスナー。認証のアクション（Issuer と未認証のときの扱い）と転送先の両方が出る
+    command: route https://v6.elbx-test.internal/app --no-color

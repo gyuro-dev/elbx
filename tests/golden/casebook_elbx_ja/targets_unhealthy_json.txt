@@ -1,0 +1,550 @@
+# case: targets_unhealthy_json
+# description: 障害時の --unhealthy --json。targets は調べるべきターゲットだけに絞られ、summary は TG 全体の件数のまま
+# command: elbx targets prod-web-alb --unhealthy --json
+# state: incident
+# exit_code: 0
+----- stdout -----
+[
+  {
+    "arn": "<tg-arn:canary_tg>",
+    "name": "prod-canary-tg",
+    "protocol": "HTTP",
+    "port": 8080,
+    "target_type": "instance",
+    "vpc_id": "<vpc>",
+    "health_check_protocol": "HTTP",
+    "health_check_port": "traffic-port",
+    "health_check_path": "/healthz",
+    "health_check_interval_seconds": 30,
+    "health_check_timeout_seconds": 5,
+    "healthy_threshold_count": 5,
+    "unhealthy_threshold_count": 2,
+    "matcher": "200",
+    "ip_address_type": "ipv4",
+    "load_balancer_arns": [
+      "<lb-arn:web_alb>"
+    ],
+    "attributes": {
+      "deregistration_delay.timeout_seconds": "300",
+      "stickiness.enabled": "false",
+      "load_balancing.algorithm.type": "round_robin",
+      "load_balancing.cross_zone.enabled": "use_load_balancer_configuration",
+      "slow_start.duration_seconds": "0",
+      "waf.fail_open.enabled": "false",
+      "stickiness.type": "lb_cookie"
+    },
+    "targets": [
+      {
+        "target_id": "<i:canary_01>",
+        "port": 8080,
+        "target_kind": "ec2",
+        "display_name": "canary-prod-01 (<i:canary_01>)",
+        "ip_address": "10.0.1.21",
+        "health_state": "draining",
+        "health_reason": "Target.DeregistrationInProgress",
+        "health_description": "Target deregistration is in progress",
+        "availability_zone": "ap-northeast-1a",
+        "subnet": {
+          "subnet_id": "<subnet:public_1a>",
+          "availability_zone": "ap-northeast-1a",
+          "name": "public-subnet-1a",
+          "cidr_block": "10.0.1.0/24",
+          "ipv6_cidr_blocks": [
+            "2001:db8:1:1::/64"
+          ],
+          "load_balancer_addresses": []
+        },
+        "subnets": [
+          {
+            "subnet_id": "<subnet:public_1a>",
+            "availability_zone": "ap-northeast-1a",
+            "name": "public-subnet-1a",
+            "cidr_block": "10.0.1.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:1::/64"
+            ],
+            "load_balancer_addresses": []
+          }
+        ],
+        "security_groups": [
+          {
+            "group_id": "<sg:alb_sg>",
+            "group_name": "prod-alb-sg",
+            "description": "Allow HTTP and HTTPS traffic from VPC",
+            "inbound_rules": [
+              {
+                "protocol": "TCP",
+                "port_range": "443",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTPS from VPC"
+              },
+              {
+                "protocol": "TCP",
+                "port_range": "80-8080",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTP range from VPC"
+              },
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "All VPC internal"
+              }
+            ],
+            "outbound_rules": [
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "0.0.0.0/0",
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "ec2": {
+          "instance_id": "<i:canary_01>",
+          "name": "canary-prod-01",
+          "state": "running",
+          "private_ip": "10.0.1.21",
+          "public_ip": "",
+          "availability_zone": "ap-northeast-1a",
+          "instance_type": "t3.small",
+          "subnet_id": "<subnet:public_1a>",
+          "security_group_ids": [
+            "<sg:alb_sg>"
+          ],
+          "subnet": {
+            "subnet_id": "<subnet:public_1a>",
+            "availability_zone": "ap-northeast-1a",
+            "name": "public-subnet-1a",
+            "cidr_block": "10.0.1.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:1::/64"
+            ],
+            "load_balancer_addresses": []
+          },
+          "security_groups": [
+            {
+              "group_id": "<sg:alb_sg>",
+              "group_name": "prod-alb-sg",
+              "description": "Allow HTTP and HTTPS traffic from VPC",
+              "inbound_rules": [
+                {
+                  "protocol": "TCP",
+                  "port_range": "443",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTPS from VPC"
+                },
+                {
+                  "protocol": "TCP",
+                  "port_range": "80-8080",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTP range from VPC"
+                },
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "All VPC internal"
+                }
+              ],
+              "outbound_rules": [
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "0.0.0.0/0",
+                  "description": ""
+                }
+              ]
+            }
+          ]
+        },
+        "ecs": null,
+        "lambda_function": null,
+        "downstream_lb": null,
+        "eni": null
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "healthy": 0,
+      "unhealthy": 0,
+      "draining": 1,
+      "attention": 1,
+      "by_state": {
+        "draining": 1
+      }
+    }
+  },
+  {
+    "arn": "<tg-arn:lambda_tg>",
+    "name": "prod-lambda-tg",
+    "protocol": "",
+    "port": null,
+    "target_type": "lambda",
+    "vpc_id": "",
+    "health_check_protocol": "",
+    "health_check_port": "",
+    "health_check_path": "/",
+    "health_check_interval_seconds": 35,
+    "health_check_timeout_seconds": 30,
+    "healthy_threshold_count": 5,
+    "unhealthy_threshold_count": 2,
+    "matcher": "200",
+    "ip_address_type": "ipv4",
+    "load_balancer_arns": [
+      "<lb-arn:web_alb>"
+    ],
+    "attributes": {
+      "deregistration_delay.timeout_seconds": "300",
+      "stickiness.enabled": "false",
+      "load_balancing.algorithm.type": "round_robin",
+      "load_balancing.cross_zone.enabled": "use_load_balancer_configuration",
+      "slow_start.duration_seconds": "0",
+      "waf.fail_open.enabled": "false",
+      "lambda.multi_value_headers.enabled": "false"
+    },
+    "targets": [
+      {
+        "target_id": "arn:aws:lambda:ap-northeast-1:123456789012:function:prod-auth-fn",
+        "port": 0,
+        "target_kind": "lambda",
+        "display_name": "Lambda:prod-auth-fn",
+        "ip_address": "",
+        "health_state": "initial",
+        "health_reason": "Elb.RegistrationInProgress",
+        "health_description": "Target registration is in progress",
+        "availability_zone": "",
+        "subnet": {
+          "subnet_id": "<subnet:public_1a>",
+          "availability_zone": "ap-northeast-1a",
+          "name": "public-subnet-1a",
+          "cidr_block": "10.0.1.0/24",
+          "ipv6_cidr_blocks": [
+            "2001:db8:1:1::/64"
+          ],
+          "load_balancer_addresses": []
+        },
+        "subnets": [
+          {
+            "subnet_id": "<subnet:public_1a>",
+            "availability_zone": "ap-northeast-1a",
+            "name": "public-subnet-1a",
+            "cidr_block": "10.0.1.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:1::/64"
+            ],
+            "load_balancer_addresses": []
+          },
+          {
+            "subnet_id": "<subnet:public_1c>",
+            "availability_zone": "ap-northeast-1c",
+            "name": "public-subnet-1c",
+            "cidr_block": "10.0.2.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:2::/64"
+            ],
+            "load_balancer_addresses": []
+          }
+        ],
+        "security_groups": [
+          {
+            "group_id": "<sg:alb_sg>",
+            "group_name": "prod-alb-sg",
+            "description": "Allow HTTP and HTTPS traffic from VPC",
+            "inbound_rules": [
+              {
+                "protocol": "TCP",
+                "port_range": "443",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTPS from VPC"
+              },
+              {
+                "protocol": "TCP",
+                "port_range": "80-8080",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTP range from VPC"
+              },
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "All VPC internal"
+              }
+            ],
+            "outbound_rules": [
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "0.0.0.0/0",
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "ec2": null,
+        "ecs": null,
+        "lambda_function": {
+          "function_name": "prod-auth-fn",
+          "function_arn": "arn:aws:lambda:ap-northeast-1:123456789012:function:prod-auth-fn",
+          "runtime": "python3.12",
+          "handler": "index.handler",
+          "state": "Active",
+          "last_modified": "<datetime>",
+          "description": "Authentication Lambda behind ALB",
+          "vpc_id": "vpc-123abc",
+          "subnet_ids": [
+            "<subnet:public_1a>",
+            "<subnet:public_1c>"
+          ],
+          "security_group_ids": [
+            "<sg:alb_sg>"
+          ],
+          "subnets": [
+            {
+              "subnet_id": "<subnet:public_1a>",
+              "availability_zone": "ap-northeast-1a",
+              "name": "public-subnet-1a",
+              "cidr_block": "10.0.1.0/24",
+              "ipv6_cidr_blocks": [
+                "2001:db8:1:1::/64"
+              ],
+              "load_balancer_addresses": []
+            },
+            {
+              "subnet_id": "<subnet:public_1c>",
+              "availability_zone": "ap-northeast-1c",
+              "name": "public-subnet-1c",
+              "cidr_block": "10.0.2.0/24",
+              "ipv6_cidr_blocks": [
+                "2001:db8:1:2::/64"
+              ],
+              "load_balancer_addresses": []
+            }
+          ],
+          "security_groups": [
+            {
+              "group_id": "<sg:alb_sg>",
+              "group_name": "prod-alb-sg",
+              "description": "Allow HTTP and HTTPS traffic from VPC",
+              "inbound_rules": [
+                {
+                  "protocol": "TCP",
+                  "port_range": "443",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTPS from VPC"
+                },
+                {
+                  "protocol": "TCP",
+                  "port_range": "80-8080",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTP range from VPC"
+                },
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "All VPC internal"
+                }
+              ],
+              "outbound_rules": [
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "0.0.0.0/0",
+                  "description": ""
+                }
+              ]
+            }
+          ]
+        },
+        "downstream_lb": null,
+        "eni": null
+      }
+    ],
+    "summary": {
+      "total": 1,
+      "healthy": 0,
+      "unhealthy": 0,
+      "draining": 0,
+      "attention": 1,
+      "by_state": {
+        "initial": 1
+      }
+    }
+  },
+  {
+    "arn": "<tg-arn:web_tg>",
+    "name": "prod-web-tg",
+    "protocol": "HTTP",
+    "port": 8080,
+    "target_type": "instance",
+    "vpc_id": "<vpc>",
+    "health_check_protocol": "HTTP",
+    "health_check_port": "traffic-port",
+    "health_check_path": "/healthz",
+    "health_check_interval_seconds": 30,
+    "health_check_timeout_seconds": 5,
+    "healthy_threshold_count": 5,
+    "unhealthy_threshold_count": 2,
+    "matcher": "200",
+    "ip_address_type": "ipv4",
+    "load_balancer_arns": [
+      "<lb-arn:web_alb>",
+      "<lb-arn:web_alb>",
+      "<lb-arn:web_alb>"
+    ],
+    "attributes": {
+      "deregistration_delay.timeout_seconds": "300",
+      "stickiness.enabled": "false",
+      "load_balancing.algorithm.type": "round_robin",
+      "load_balancing.cross_zone.enabled": "use_load_balancer_configuration",
+      "slow_start.duration_seconds": "0",
+      "waf.fail_open.enabled": "false",
+      "stickiness.type": "lb_cookie"
+    },
+    "targets": [
+      {
+        "target_id": "<i:web_02>",
+        "port": 8080,
+        "target_kind": "ec2",
+        "display_name": "web-prod-02 (<i:web_02>)",
+        "ip_address": "10.0.2.12",
+        "health_state": "unhealthy",
+        "health_reason": "Target.FailedHealthChecks",
+        "health_description": "Health checks failed with these codes: [502]",
+        "availability_zone": "ap-northeast-1c",
+        "subnet": {
+          "subnet_id": "<subnet:public_1c>",
+          "availability_zone": "ap-northeast-1c",
+          "name": "public-subnet-1c",
+          "cidr_block": "10.0.2.0/24",
+          "ipv6_cidr_blocks": [
+            "2001:db8:1:2::/64"
+          ],
+          "load_balancer_addresses": []
+        },
+        "subnets": [
+          {
+            "subnet_id": "<subnet:public_1c>",
+            "availability_zone": "ap-northeast-1c",
+            "name": "public-subnet-1c",
+            "cidr_block": "10.0.2.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:2::/64"
+            ],
+            "load_balancer_addresses": []
+          }
+        ],
+        "security_groups": [
+          {
+            "group_id": "<sg:alb_sg>",
+            "group_name": "prod-alb-sg",
+            "description": "Allow HTTP and HTTPS traffic from VPC",
+            "inbound_rules": [
+              {
+                "protocol": "TCP",
+                "port_range": "443",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTPS from VPC"
+              },
+              {
+                "protocol": "TCP",
+                "port_range": "80-8080",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "HTTP range from VPC"
+              },
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "10.0.0.0/16",
+                "description": "All VPC internal"
+              }
+            ],
+            "outbound_rules": [
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "0.0.0.0/0",
+                "description": ""
+              }
+            ]
+          }
+        ],
+        "ec2": {
+          "instance_id": "<i:web_02>",
+          "name": "web-prod-02",
+          "state": "running",
+          "private_ip": "10.0.2.12",
+          "public_ip": "",
+          "availability_zone": "ap-northeast-1c",
+          "instance_type": "t3.medium",
+          "subnet_id": "<subnet:public_1c>",
+          "security_group_ids": [
+            "<sg:alb_sg>"
+          ],
+          "subnet": {
+            "subnet_id": "<subnet:public_1c>",
+            "availability_zone": "ap-northeast-1c",
+            "name": "public-subnet-1c",
+            "cidr_block": "10.0.2.0/24",
+            "ipv6_cidr_blocks": [
+              "2001:db8:1:2::/64"
+            ],
+            "load_balancer_addresses": []
+          },
+          "security_groups": [
+            {
+              "group_id": "<sg:alb_sg>",
+              "group_name": "prod-alb-sg",
+              "description": "Allow HTTP and HTTPS traffic from VPC",
+              "inbound_rules": [
+                {
+                  "protocol": "TCP",
+                  "port_range": "443",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTPS from VPC"
+                },
+                {
+                  "protocol": "TCP",
+                  "port_range": "80-8080",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "HTTP range from VPC"
+                },
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "10.0.0.0/16",
+                  "description": "All VPC internal"
+                }
+              ],
+              "outbound_rules": [
+                {
+                  "protocol": "ALL",
+                  "port_range": "ALL",
+                  "source_or_dest": "0.0.0.0/0",
+                  "description": ""
+                }
+              ]
+            }
+          ]
+        },
+        "ecs": null,
+        "lambda_function": null,
+        "downstream_lb": null,
+        "eni": null
+      }
+    ],
+    "summary": {
+      "total": 2,
+      "healthy": 1,
+      "unhealthy": 1,
+      "draining": 0,
+      "attention": 1,
+      "by_state": {
+        "healthy": 1,
+        "unhealthy": 1
+      }
+    }
+  }
+]
