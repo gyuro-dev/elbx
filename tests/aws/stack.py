@@ -415,6 +415,47 @@ def _watch_stack(
         time.sleep(STACK_POLL_SECONDS)
 
 
+def _shorten_draining(session: Any, stack_name: str) -> None:
+    """
+    スタックの TG の、登録解除の待ち時間（`deregistration_delay.timeout_seconds`。既定は 300 秒）を
+    0 秒にする。スタックを消す直前に呼ぶ。
+
+    ECS のサービスは、タスクが TG から外れ終わる（draining が終わる）まで削除が終わらず、
+    ALB や VPC の削除がその後ろで待つ（2026-11-14 の削除では、全体の 620 秒のうち、
+    ECS のサービスが 486 秒だった）。
+    テンプレートではなく消す直前に変えるので、ケースの出力（`dereg_delay=300s`）は変わらない。
+    変えられなくても削除は続ける（遅くなるだけ）。
+
+    :param session: boto3.Session インスタンス
+    :param stack_name: 対象のスタック名
+    """
+    try:
+        pages = session.client("cloudformation").get_paginator("list_stack_resources")
+        arns = [
+            res["PhysicalResourceId"]
+            for page in pages.paginate(StackName=stack_name)
+            for res in page["StackResourceSummaries"]
+            if res["ResourceType"] == "AWS::ElasticLoadBalancingV2::TargetGroup"
+            and res["ResourceStatus"] != "DELETE_COMPLETE"
+            and res.get("PhysicalResourceId", "").startswith("arn:")
+        ]
+    except ClientError as exc:
+        _log(f"TG の登録解除の待ち時間を短くできませんでした（削除は続けます）: {exc}")
+        return
+    elbv2 = session.client("elbv2")
+    shortened = 0
+    for arn in arns:
+        try:
+            elbv2.modify_target_group_attributes(
+                TargetGroupArn=arn,
+                Attributes=[{"Key": "deregistration_delay.timeout_seconds", "Value": "0"}],
+            )
+            shortened += 1
+        except ClientError:
+            continue  # Lambda の TG にはこの属性がない。すでに消えた TG もある
+    _log(f"TG {shortened} 個の登録解除の待ち時間を 0 秒にしました（削除を早く終えるため）")
+
+
 def delete_environment(session: Any, opts: AwsOptions) -> None:
     """
     CloudFormation スタックと、インポートした ACM 証明書を削除する（存在しなければ何もしない）。
@@ -428,6 +469,7 @@ def delete_environment(session: Any, opts: AwsOptions) -> None:
         kwargs: dict[str, Any] = {"StackName": opts.stack_name}
         if opts.cfn_role_arn:
             kwargs["RoleARN"] = opts.cfn_role_arn
+        _shorten_draining(session, opts.stack_name)
         _log(
             f"スタック {opts.stack_name} を削除しています"
             "（VPC 内の Lambda があると 10〜20分かかります）"

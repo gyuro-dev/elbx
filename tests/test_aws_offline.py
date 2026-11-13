@@ -27,7 +27,7 @@ from .aws.options import (
     sso_token_status,
     validate_options,
 )
-from .aws.stack import _self_signed_certificate, never_healthy_targets
+from .aws.stack import _self_signed_certificate, _shorten_draining, never_healthy_targets
 from .aws.template import build_template, template_body
 from .harness import TestEnv, check_exposure_policy, for_real_aws, load_infra
 
@@ -238,6 +238,100 @@ def test_target_groups_with_ip_targets_wait_for_the_subnets() -> None:
     subnets = {"SubnetPublic1a", "SubnetPublic1c", "SubnetV6only1a"}
     for lid in ("TgIpTg", "TgAlbToNlbTg", "TgV6IpTg"):
         assert subnets <= set(template["Resources"][lid]["DependsOn"]), lid
+
+
+class _DrainingSession:
+    """`_shorten_draining` が呼ぶ CloudFormation と ELBv2 だけを持つ、接続しないセッション。"""
+
+    def __init__(self, resources: list[dict[str, str]], fail_listing: bool = False) -> None:
+        self.modified: list[tuple[str, list[dict[str, str]]]] = []
+        self._resources = resources
+        self._fail_listing = fail_listing
+
+    def client(self, name: str) -> Any:
+        return self
+
+    def get_paginator(self, name: str) -> Any:
+        assert name == "list_stack_resources"
+        return self
+
+    def paginate(self, StackName: str) -> list[dict[str, Any]]:
+        if self._fail_listing:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "no"}}, "ListStackResources"
+            )
+        half = len(self._resources) // 2
+        return [
+            {"StackResourceSummaries": self._resources[:half]},
+            {"StackResourceSummaries": self._resources[half:]},
+        ]
+
+    def modify_target_group_attributes(
+        self,
+        TargetGroupArn: str,
+        Attributes: list[dict[str, str]],
+    ) -> None:
+        if "lambda" in TargetGroupArn:
+            raise ClientError(
+                {"Error": {"Code": "ValidationError", "Message": "not supported"}},
+                "ModifyTargetGroupAttributes",
+            )
+        self.modified.append((TargetGroupArn, Attributes))
+
+
+def test_draining_is_shortened_before_the_stack_is_deleted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """
+    スタックを消す直前に、残っている TG の登録解除の待ち時間を 0 秒にする（ECS のサービスの削除が
+    draining の 300 秒を待たないように）。この属性がない Lambda の TG で失敗しても、ほかは続ける。
+    """
+    tg = "AWS::ElasticLoadBalancingV2::TargetGroup"
+    arn = "arn:aws:elasticloadbalancing:ap-northeast-1:123456789012:targetgroup/"
+    session = _DrainingSession(
+        [
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": arn + "ecs/1",
+            },
+            {
+                "ResourceType": "AWS::EC2::VPC",
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": "vpc-1",
+            },
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": arn + "lambda/2",
+            },
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "DELETE_COMPLETE",
+                "PhysicalResourceId": arn + "gone/3",
+            },
+            {"ResourceType": tg, "ResourceStatus": "CREATE_FAILED"},
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "UPDATE_COMPLETE",
+                "PhysicalResourceId": arn + "web/4",
+            },
+        ]
+    )
+    _shorten_draining(session, "elbx-test")
+    zero = [{"Key": "deregistration_delay.timeout_seconds", "Value": "0"}]
+    assert session.modified == [(arn + "ecs/1", zero), (arn + "web/4", zero)]
+    assert "TG 2 個" in capsys.readouterr().out
+
+
+def test_deletion_goes_on_when_draining_cannot_be_shortened(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """スタックのリソースを読めなくても、例外にせず削除に進む（遅くなるだけ）。"""
+    session = _DrainingSession([], fail_listing=True)
+    _shorten_draining(session, "elbx-test")
+    assert session.modified == []
+    assert "削除は続けます" in capsys.readouterr().out
 
 
 def test_listener_with_authentication_gets_ordered_actions() -> None:
