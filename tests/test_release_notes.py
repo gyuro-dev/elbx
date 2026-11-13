@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
@@ -72,6 +73,26 @@ def test_missing_version_returns_none() -> None:
 @pytest.mark.parametrize("argv", [[], ["a", "b"]])
 def test_main_rejects_wrong_argument_count(argv: list[str]) -> None:
     assert release_notes_module.main(argv) == 2
+
+
+def test_main_writes_utf8_whatever_the_console_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    ノートは、端末の文字コードによらず UTF-8 で出す。Windows の端末（cp932）では、`–` のような
+    文字を書けずに落ちていた（0.1.1 の CHANGELOG の「U+202A–U+202E」で起きた）。
+    """
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "## [1.2.3] - 2026-11-14\n\n- U+202A–U+202E、省略の … と日本語\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(release_notes_module, "CHANGELOG", changelog)
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="ascii"))
+    assert release_notes_module.main(["v1.2.3"]) == 0
+    notes = raw.getvalue().decode("utf-8")
+    assert notes.startswith("- U+202A–U+202E、省略の … と日本語\n")
+    assert "**PyPI**: https://pypi.org/project/elbx/1.2.3/" in notes
 
 
 def test_real_changelog_has_unreleased_section() -> None:
