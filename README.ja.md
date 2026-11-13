@@ -339,6 +339,7 @@ POST https://api.elbx-test.internal/x?mode=fast
 - パスは、`%XX` をデコードし（`%2F` も `/` になります）、`.` と `..` の部分を取り除いてから照合します
 - 一致したルールの転送先 TG に別の ELB が登録されていれば、その ELB の、ターゲットのポートと同じポートのリスナーで続けて評価します。対象は、NLB の `alb` タイプの TG に登録された ALB と、ip タイプの TG に IP で登録された ELB のノードです
 - 重み 0 の TG にはリクエストが届かないので、TG の行に `(リクエストは届きません)` と書き、ターゲットと下流の ELB はたどりません
+- 認証のアクション（Cognito / OIDC）があるルールは、認証が通ったものとして、その先の転送を評価します
 - 評価するのはリスナールールだけです。SG・NACL・ルートテーブルで通信が通るかは判定しません
 
 </details>
@@ -393,7 +394,7 @@ prod-web-tg     ec2     i-88c6e44c0bb0ea3e6  web-prod-01                        
 | `LB` | すべての TG | ELB の名前か ARN。その ELB の TG だけを表示します。省略すると（`--tg` もなければ）、ELB に紐づいていない TG も含めて全 TG です。 |
 | `--tg TG` | - | この TG（名前か ARN）だけ。`LB` とは併用できません。 |
 | `-s`, `--search TEXT` | - | 名前にこの文字列を含む TG だけ（大文字小文字は区別しない）。`LB` とは併用でき、`--tg` とはできません。 |
-| `--unhealthy` | すべて表示 | 調べるべきターゲットだけに絞ります。対象は healthy 以外（`unhealthy` / `draining` / `initial` / `unused` / `unavailable`）のうち、設定上そうなるものを除いたターゲットです。除くのは、ヘルスチェックを無効にした TG の `unavailable`（`Target.HealthCheckDisabled`。Lambda の TG の既定）と、どの ELB にも使われていない TG の `unused` です。ELB に使われている TG の停止中のインスタンス（`unused`）は出します。`DETAIL`（状態の説明）と `HEALTH CHECK`（プロトコル・ポート・パス・成功コード・間隔・タイムアウト・閾値）の列が加わります。該当がなければ「調べるべきターゲットはありません。」と出ます。`--json` も同じように絞られます。 |
+| `--unhealthy` | すべて表示 | 調べるべきターゲットだけに絞ります。対象は healthy 以外（`unhealthy` / `draining` / `initial` / `unused` / `unavailable`）のうち、設定上そうなるものを除いたターゲットです。除くのは、ヘルスチェックを無効にした TG の `unavailable`（`Target.HealthCheckDisabled`。Lambda の TG の既定）と、どの ELB にも使われていない TG の `unused` です。ELB に使われている TG の停止中のインスタンス（`unused`）は出します。`DETAIL`（状態の説明）と `HEALTH CHECK`（プロトコル・ポート・パス・成功コード・間隔・タイムアウト・閾値）の列が加わります。該当がなければ「調べるべきターゲットはありません。」と出ます。`--json` も同じように絞られます（`summary` は絞る前の、TG 全体の件数です）。 |
 | `--json` | テキスト | TG の配列を JSON で出力します: ヘルスチェック設定、属性、件数の集計（`summary`。状態ごとの `by_state` と調べるべき数 `attention`）、各ターゲットの詳細（EC2 / ECS / Lambda / ENI / 下流の ELB）。 |
 
 `KIND` 列はターゲットの正体（`ec2` / `ecs` / `lambda` / `alb` / `nlb` / `eni` / `ip`）、\
@@ -727,13 +728,13 @@ print(elbx.format_route_simulation(result, use_color=False))
 <details>
 <summary><b>レシピ集（Python）</b></summary>
 
-#### アカウント全体の unhealthy なターゲット（CLI なら `elbx targets --unhealthy`）
+#### アカウント全体の、調べるべきターゲット（CLI なら `elbx targets --unhealthy`）
 
 ```python
 for lb in client.list_load_balancers():
     for tg in lb.target_groups:
         for t in tg.targets:
-            if t.health_state != "healthy":
+            if tg.needs_attention(t):  # healthy 以外。ヘルスチェックが無効な Lambda などは除く
                 print(lb.name, tg.name, t.display_name, t.health_state, t.health_reason)
 ```
 
@@ -754,13 +755,18 @@ for tg in client.list_target_groups():
 from elbx import LoadBalancerView
 
 
-def walk(lb: LoadBalancerView, depth: int = 0) -> None:
+def walk(lb: LoadBalancerView, depth: int = 0, seen: set[str] | None = None) -> None:
+    seen = set() if seen is None else seen
     print("  " * depth + f"{lb.type}: {lb.name}")
     for t in lb.all_targets:
-        if t.downstream_lb is not None:
-            walk(t.downstream_lb, depth + 1)  # 下流の ELB（ALB も NLB もある）
-        else:
+        down = t.downstream_lb  # 下流の ELB（ALB も NLB もある）
+        if down is None:
             print("  " * (depth + 1) + f"{t.target_kind}: {t.display_name}")
+        elif (
+            down.arn not in seen
+        ):  # 同じ ELB は 1 回だけたどる（AZ ごとのノードや複数のリスナーから届く）
+            seen.add(down.arn)
+            walk(down, depth + 1, seen)
 
 
 walk(client.get_load_balancer("edge-ingress-nlb"))

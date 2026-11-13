@@ -353,6 +353,24 @@ def _tg_ref(
     )
 
 
+# RedirectConfig の Query の既定値（リクエストのクエリをそのまま付ける）
+_REDIRECT_KEEPS_QUERY = "#{query}"
+
+
+def _auth_summary(label: str, **details: str) -> str:
+    """
+    認証アクションの要約（`AuthenticateOidc (issuer=…, on_unauthenticated=…)`）を作る。
+    どこで認証するかと、未認証のリクエストをどうするか（deny / allow / authenticate）が分かる
+    ようにする。値のない項目は出さない。クライアントのシークレットは出さない。
+
+    :param label: アクションの名前
+    :param details: 出す項目（名前 -> 値）
+    :return: 要約
+    """
+    shown = ", ".join(f"{name}={value}" for name, value in details.items() if value)
+    return f"{label} ({shown})" if shown else label
+
+
 def _summarize_action(
     act: dict[str, Any], tg_view_map: dict[str, TargetGroupView]
 ) -> tuple[str, list[RuleTargetGroupRef]]:
@@ -388,7 +406,26 @@ def _summarize_action(
             f"{rc.get('Protocol', '#{protocol}')}://{rc.get('Host', '#{host}')}:"
             f"{rc.get('Port', '#{port}')}{rc.get('Path', '/#{path}')}"
         )
+        # Query の既定（リクエストのクエリをそのまま付ける）は出さず、変えているときだけ出す
+        query = rc.get("Query", _REDIRECT_KEEPS_QUERY)
+        if query != _REDIRECT_KEEPS_QUERY:
+            target += f"?{query}"
         return f"Redirect ({rc.get('StatusCode', 'HTTP_301')}) -> {target}", []
+    if act_type == "authenticate-cognito":
+        cognito = act.get("AuthenticateCognitoConfig", {})
+        return _auth_summary(
+            "AuthenticateCognito",
+            # ARN は `…:userpool/<プールの ID>`
+            user_pool=cognito.get("UserPoolArn", "").rpartition("/")[2],
+            on_unauthenticated=cognito.get("OnUnauthenticatedRequest", ""),
+        ), []
+    if act_type == "authenticate-oidc":
+        oidc = act.get("AuthenticateOidcConfig", {})
+        return _auth_summary(
+            "AuthenticateOidc",
+            issuer=oidc.get("Issuer", ""),
+            on_unauthenticated=oidc.get("OnUnauthenticatedRequest", ""),
+        ), []
     if act_type == "fixed-response":
         fc = act.get("FixedResponseConfig", {})
         return (

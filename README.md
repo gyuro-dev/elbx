@@ -336,6 +336,7 @@ Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
 - The path is percent-decoded (`%2F` becomes `/` too) and its `.` and `..` segments are removed before it is matched
 - When another load balancer is registered in a target group of the matched rule, evaluation continues on that load balancer's listener for the target's port. This covers an ALB registered in an `alb` target group of an NLB, and the node IPs of a load balancer registered in an `ip` target group
 - A target group of weight 0 receives no requests, so its line says `(receives no requests)` and its targets and downstream load balancers are not followed
+- A rule with an authentication action (Cognito / OIDC) is evaluated as if the authentication succeeded, and the forward after it is followed
 - Only listener rules are evaluated; whether security groups, network ACLs and route tables let the traffic through is not checked
 
 </details>
@@ -389,7 +390,7 @@ prod-web-tg     ec2     i-88c6e44c0bb0ea3e6  web-prod-01                        
 | `LB` | every target group | The name or ARN of a load balancer; only its target groups are shown. When omitted (and without `--tg`), every target group is shown, including those not attached to a load balancer. |
 | `--tg TG` | - | Only this target group (name or ARN). Give either `LB` or `--tg`, not both. |
 | `-s`, `--search TEXT` | - | Only the target groups whose name contains this text (case-insensitive). Can be combined with `LB` (but not with `--tg`). |
-| `--unhealthy` | everything | Only the targets that need attention: those that are not healthy (`unhealthy` / `draining` / `initial` / `unused` / `unavailable`), minus the states the configuration itself causes. Those are `unavailable` with `Target.HealthCheckDisabled` (health checks turned off, the default for a Lambda target group) and `unused` in a target group that no load balancer uses. A stopped instance (`unused`) in a target group that is in use is still shown. Adds two columns: `DETAIL` (a description of the state) and `HEALTH CHECK` (protocol, port, path, success codes, interval, timeout, thresholds). When nothing matches, it prints "No targets need attention.". With `--json`, the JSON is filtered the same way. |
+| `--unhealthy` | everything | Only the targets that need attention: those that are not healthy (`unhealthy` / `draining` / `initial` / `unused` / `unavailable`), minus the states the configuration itself causes. Those are `unavailable` with `Target.HealthCheckDisabled` (health checks turned off, the default for a Lambda target group) and `unused` in a target group that no load balancer uses. A stopped instance (`unused`) in a target group that is in use is still shown. Adds two columns: `DETAIL` (a description of the state) and `HEALTH CHECK` (protocol, port, path, success codes, interval, timeout, thresholds). When nothing matches, it prints "No targets need attention.". With `--json`, the JSON is filtered the same way (`summary` keeps the counts of the whole target group, before filtering). |
 | `--json` | text | An array of target groups as JSON, with the health check settings, the attributes, the counts (`summary`: `by_state` per state and `attention`) and the details of every target (EC2 / ECS / Lambda / ENI / downstream load balancer). |
 
 The `KIND` column is what the target is (`ec2` / `ecs` / `lambda` / `alb` / `nlb` / `eni` / `ip`). The `STATE` column is the state of the resource itself (`running` for EC2, `RUNNING` for ECS, `active` for a load balancer, ...).
@@ -713,13 +714,13 @@ An empty list such as `names=[]` means "zero names" and gives an empty result (o
 <details>
 <summary><b>Recipes (Python)</b></summary>
 
-#### Unhealthy targets in the whole account (`elbx targets --unhealthy` on the CLI)
+#### Targets that need attention in the whole account (`elbx targets --unhealthy` on the CLI)
 
 ```python
 for lb in client.list_load_balancers():
     for tg in lb.target_groups:
         for t in tg.targets:
-            if t.health_state != "healthy":
+            if tg.needs_attention(t):  # not healthy, minus e.g. a Lambda with health checks off
                 print(lb.name, tg.name, t.display_name, t.health_state, t.health_reason)
 ```
 
@@ -740,13 +741,18 @@ for tg in client.list_target_groups():
 from elbx import LoadBalancerView
 
 
-def walk(lb: LoadBalancerView, depth: int = 0) -> None:
+def walk(lb: LoadBalancerView, depth: int = 0, seen: set[str] | None = None) -> None:
+    seen = set() if seen is None else seen
     print("  " * depth + f"{lb.type}: {lb.name}")
     for t in lb.all_targets:
-        if t.downstream_lb is not None:
-            walk(t.downstream_lb, depth + 1)  # downstream load balancer (an ALB or an NLB)
-        else:
+        down = t.downstream_lb  # downstream load balancer (an ALB or an NLB)
+        if down is None:
             print("  " * (depth + 1) + f"{t.target_kind}: {t.display_name}")
+        elif (
+            down.arn not in seen
+        ):  # follow a load balancer once (one node per AZ, several listeners)
+            seen.add(down.arn)
+            walk(down, depth + 1, seen)
 
 
 walk(client.get_load_balancer("edge-ingress-nlb"))
