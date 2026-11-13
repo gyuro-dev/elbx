@@ -26,7 +26,9 @@
         "availability_zone": "ap-northeast-1a",
         "name": "public-subnet-1a",
         "cidr_block": "10.0.1.0/24",
-        "ipv6_cidr_blocks": [],
+        "ipv6_cidr_blocks": [
+          "<ipv6:public_1a>::/64"
+        ],
         "load_balancer_addresses": []
       },
       "subnets": [
@@ -35,7 +37,9 @@
           "availability_zone": "ap-northeast-1a",
           "name": "public-subnet-1a",
           "cidr_block": "10.0.1.0/24",
-          "ipv6_cidr_blocks": [],
+          "ipv6_cidr_blocks": [
+            "<ipv6:public_1a>::/64"
+          ],
           "load_balancer_addresses": []
         }
       ],
@@ -70,6 +74,12 @@
               "port_range": "ALL",
               "source_or_dest": "0.0.0.0/0",
               "description": ""
+            },
+            {
+              "protocol": "ALL",
+              "port_range": "ALL",
+              "source_or_dest": "::/0",
+              "description": ""
             }
           ]
         }
@@ -91,7 +101,9 @@
           "availability_zone": "ap-northeast-1a",
           "name": "public-subnet-1a",
           "cidr_block": "10.0.1.0/24",
-          "ipv6_cidr_blocks": [],
+          "ipv6_cidr_blocks": [
+            "<ipv6:public_1a>::/64"
+          ],
           "load_balancer_addresses": []
         },
         "security_groups": [
@@ -124,6 +136,12 @@
                 "protocol": "ALL",
                 "port_range": "ALL",
                 "source_or_dest": "0.0.0.0/0",
+                "description": ""
+              },
+              {
+                "protocol": "ALL",
+                "port_range": "ALL",
+                "source_or_dest": "::/0",
                 "description": ""
               }
             ]

@@ -9,7 +9,7 @@ POST https://api.elbx-test.internal/x?mode=fast
 入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
   ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
       Path '/x' は [/v1/*] のいずれにも一致しません
-  ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
+  ✗ Rule [priority:20] IF Method in [POST, GET] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24] AND Header(X-Env) in [ip-direct]
       送信元IPが未指定のため不一致として扱いました（--source-ip で指定できます）
   ✗ Rule [priority:25] IF Path in [/ecs/*]
       Path '/x' は [/ecs/*] のいずれにも一致しません

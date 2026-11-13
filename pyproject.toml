@@ -152,7 +152,7 @@ casebook_html_reports = [
     "reports/casebook_en.html = tests/casebook_elbx_en.yaml",
 ]
 markers = [
-    "moto_only: moto だけで確認するケース（実際の AWS では作らない IPv6 の構成を使う）",
+    "moto_only: moto だけで確認するケース（実際の AWS では作れない構成を使う。今はない）",
 ]
 
 [tool.coverage.run]

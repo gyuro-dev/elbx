@@ -7,6 +7,35 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- `elbx tree` (the relationship map and `--full`) shows the actions that come before a forward.
+  A rule that authenticates with Cognito or OIDC and then forwards was shown as a plain
+  forward. The authentication is summarized as `AuthenticateCognito (user_pool=…,
+  on_unauthenticated=…)` / `AuthenticateOidc (issuer=…, on_unauthenticated=…)` instead of the
+  bare action type (also in `actions_summary` of `--json` and the library).
+- `elbx targets --unhealthy --json`: `summary` keeps the counts of the whole target group.
+  It was computed from the filtered targets, so a target group with nine healthy targets and
+  one unhealthy one read `"total": 1, "healthy": 0`.
+- `elbx route`: an IPv6 address as the host (`http://[2001:db8::1]/`, `-H "Host: 2001:db8::1"`)
+  is no longer read as host `2001` with a port.
+- A redirect that changes the query string shows it (`Redirect (HTTP_301) -> …/path?utm=1`);
+  the default, which keeps the query of the request, is not shown.
+- The reason for a `RegexValues` condition on a header names the header.
+- `elbx find` with the ARN of an ECS cluster finds the targets of that cluster.
+- `elbx -- --help` is no longer taken for the `--help` option, and a mistyped command name
+  with control characters is escaped in the error.
+- A closed pipe (`elbx ls | head`) no longer leaves a file descriptor open.
+
+### Security
+
+- Credentials written in a URL (`elbx route https://user:secret@host/`) are replaced with
+  `***@` in the output, the JSON, the error messages and `RouteSimulationResult.url`.
+- Characters that change the text direction (U+202A–U+202E, U+2066–U+2069) in names and tags
+  from AWS are escaped like other control characters (`\u202e`), in the text and the JSON
+  output, so a name cannot be made to look like another one. Zero-width characters no longer
+  shift the columns of a table.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added

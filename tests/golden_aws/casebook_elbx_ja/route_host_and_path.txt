@@ -10,9 +10,9 @@ GET https://api.elbx-test.internal/v1/users
   ✓ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
       Host 'api.elbx-test.internal' は [api.elbx-test.internal] に一致
       Path '/v1/users' は [/v1/*] に一致
-  => Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)
+  => Forward -> prod-canary-tg (weight=10), prod-web-tg (weight=90)
+     TG: prod-canary-tg (weight=10) [1/1 healthy]
+       - [● healthy] canary-prod-01 (<i:canary_01>) port=8080
      TG: prod-web-tg (weight=90) [2/2 healthy]
        - [● healthy] web-prod-01 (<i:web_01>) port=8080
        - [● healthy] web-prod-02 (<i:web_02>) port=8080
-     TG: prod-canary-tg (weight=10) [1/1 healthy]
-       - [● healthy] canary-prod-01 (<i:canary_01>) port=8080

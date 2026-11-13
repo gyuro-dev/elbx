@@ -24,15 +24,16 @@ from botocore.exceptions import ClientError
 from .aws.options import (
     AwsOptions,
     command_names,
-    resource_names,
     sso_token_status,
     validate_options,
 )
-from .aws.stack import _self_signed_certificate
+from .aws.stack import _self_signed_certificate, _shorten_draining, never_healthy_targets
 from .aws.template import build_template, template_body
-from .harness import check_exposure_policy, for_real_aws, load_infra
+from .harness import TestEnv, check_exposure_policy, for_real_aws, load_infra
 
 ACCOUNT = "123456789012"
+# Amazon が VPC に割り当てた IPv6 の CIDR を指す、CloudFormation の式
+_VPC_IPV6_CIDR = {"Fn::Select": [0, {"Fn::GetAtt": ["Vpc", "Ipv6CidrBlocks"]}]}
 
 
 def _opts(**kwargs: Any) -> AwsOptions:
@@ -147,34 +148,248 @@ def test_template_never_assigns_public_ip_to_ec2_or_subnets() -> None:
             for ni in inst["Properties"]["NetworkInterfaces"]
         )
     for subnet in _resources(template, "AWS::EC2::Subnet"):
-        assert subnet["Properties"]["MapPublicIpOnLaunch"] is False
+        props = subnet["Properties"]
+        if "CidrBlock" in props:
+            assert props["MapPublicIpOnLaunch"] is False
+        else:  # IPv6 専用のサブネットには、IPv4 のアドレスそのものがない
+            assert props["Ipv6Native"] is True
+
+
+def test_template_has_no_ipv6_route_to_the_internet() -> None:
+    """IPv6 のアドレスはグローバルなので、インターネットへの IPv6 の経路（::/0）を作らない。"""
+    template = build_template(load_infra(), _opts())
+    for route in _resources(template, "AWS::EC2::Route"):
+        assert "DestinationIpv6CidrBlock" not in route["Properties"]
+    assert not _resources(template, "AWS::EC2::EgressOnlyInternetGateway")
 
 
 def test_template_security_groups_allow_only_vpc_sources() -> None:
     template = build_template(load_infra(), _opts())
     for sg in _resources(template, "AWS::EC2::SecurityGroup"):
         for rule in sg["Properties"]["SecurityGroupIngress"]:
-            assert rule["CidrIp"].startswith("10.0.")
-            assert "CidrIpv6" not in rule
+            # IPv4 は VPC の CIDR、IPv6 は Amazon が VPC に割り当てた CIDR だけを許可する
+            if "CidrIpv6" in rule:
+                assert rule["CidrIpv6"] == _VPC_IPV6_CIDR
+                assert "CidrIp" not in rule
+            else:
+                assert rule["CidrIp"].startswith("10.0.")
 
 
-def test_moto_only_ipv6_resources_are_not_created_on_real_aws() -> None:
-    """IPv6 の構成（moto_only のリソースとサブネットの ipv6_cidr）は実際の AWS では作らない。"""
+def test_ipv6_is_built_from_the_cidr_amazon_assigns() -> None:
+    """
+    IPv6 の構成は、infra.yaml の文書用アドレスそのものではなく、Amazon が割り当てる /56 の中の
+    同じ位置のアドレスで作る。
+    """
     infra = load_infra()
-    moto_only = [
-        r["name"]
-        for kind in ("security_groups", "ec2_instances", "target_groups", "load_balancers")
-        for r in infra[kind]
-        if r.get("moto_only")
+    template = build_template(infra, _opts())
+    resources = template["Resources"]
+    assert "2001:db8" not in template_body(infra, _opts())
+    assert resources["VpcIpv6"]["Properties"]["AmazonProvidedIpv6CidrBlock"] is True
+
+    # サブネットは、割り当てられた /56 を /64 に分けた、infra.yaml と同じ番号のもの
+    def subnet_number(lid: str) -> int:
+        select = resources[lid]["Properties"]["Ipv6CidrBlock"]["Fn::Select"]
+        assert select[1] == {"Fn::Cidr": [_VPC_IPV6_CIDR, 256, "64"]}
+        return int(select[0])
+
+    assert [
+        subnet_number(lid) for lid in ("SubnetPublic1a", "SubnetPublic1c", "SubnetV6only1a")
+    ] == [
+        1,
+        2,
+        3,
     ]
-    assert moto_only, "infra.yaml に moto だけで作る IPv6 の構成がありません"
-    body = template_body(infra, _opts())
-    for name in [*moto_only, "v6.elbx-test.internal"]:
-        assert name not in body
-    assert "2001:db8" not in body
-    real = for_real_aws(infra)
-    names = {base for pairs in resource_names(real, _opts()).values() for base, _ in pairs}
-    assert not names & set(moto_only)
+    assert all(
+        subnet["DependsOn"] == "VpcIpv6" for subnet in _resources(template, "AWS::EC2::Subnet")
+    )
+
+    # アドレスは「そのサブネットの CIDR の先頭 + 同じ下位」で作る（2001:db8:1:1::31 -> ::31）
+    def address(lid: str, suffix: str) -> dict[str, Any]:
+        subnet_cidr = {"Fn::Select": [0, {"Fn::GetAtt": [lid, "Ipv6CidrBlocks"]}]}
+        prefix = {"Fn::Select": [0, {"Fn::Split": ["::/64", subnet_cidr]}]}
+        return {"Fn::Join": ["", [prefix, suffix]]}
+
+    interface = resources["InstanceV6Web01"]["Properties"]["NetworkInterfaces"][0]
+    assert interface["Ipv6Addresses"] == [{"Ipv6Address": address("SubnetPublic1a", "::31")}]
+    assert interface["GroupSet"] == [{"Ref": "SgAlbSg"}, {"Ref": "SgV6WebSg"}]
+    tg = resources["TgV6IpTg"]["Properties"]
+    assert tg["IpAddressType"] == "ipv6"
+    assert [t["Id"] for t in tg["Targets"]] == [
+        address("SubnetPublic1a", "::31"),
+        address("SubnetPublic1c", "::50"),
+        address("SubnetV6only1a", "::50"),
+    ]
+    assert resources["LbV6Alb"]["Properties"]["IpAddressType"] == "dualstack"
+    rule = resources["LbV6AlbListener80Rule10"]
+    assert rule["Properties"]["Conditions"][0]["SourceIpConfig"]["Values"] == [_VPC_IPV6_CIDR]
+    assert rule["DependsOn"] == "VpcIpv6"
+    # IPv6 のアドレスを持つインスタンスは、IPv6 でもヘルスチェックに応える
+    user_data = resources["InstanceV6Web01"]["Properties"]["UserData"]["Fn::Base64"]
+    assert 'http.server "$port" --bind ::' in user_data
+
+
+def test_target_groups_with_ip_targets_wait_for_the_subnets() -> None:
+    """
+    IP を登録する TG は、サブネットができてから作る。IPv4 の IP は文字で書くのでサブネットへの
+    参照がなく、順序を書かないと「VPC の中だがサブネットの外」で登録に失敗する（実際の AWS で
+    2026-11-14 に起きた）。
+    """
+    template = build_template(load_infra(), _opts())
+    subnets = {"SubnetPublic1a", "SubnetPublic1c", "SubnetV6only1a"}
+    for lid in ("TgIpTg", "TgAlbToNlbTg", "TgV6IpTg"):
+        assert subnets <= set(template["Resources"][lid]["DependsOn"]), lid
+
+
+class _DrainingSession:
+    """`_shorten_draining` が呼ぶ CloudFormation と ELBv2 だけを持つ、接続しないセッション。"""
+
+    def __init__(self, resources: list[dict[str, str]], fail_listing: bool = False) -> None:
+        self.modified: list[tuple[str, list[dict[str, str]]]] = []
+        self._resources = resources
+        self._fail_listing = fail_listing
+
+    def client(self, name: str) -> Any:
+        return self
+
+    def get_paginator(self, name: str) -> Any:
+        assert name == "list_stack_resources"
+        return self
+
+    def paginate(self, StackName: str) -> list[dict[str, Any]]:
+        if self._fail_listing:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "no"}}, "ListStackResources"
+            )
+        half = len(self._resources) // 2
+        return [
+            {"StackResourceSummaries": self._resources[:half]},
+            {"StackResourceSummaries": self._resources[half:]},
+        ]
+
+    def modify_target_group_attributes(
+        self,
+        TargetGroupArn: str,
+        Attributes: list[dict[str, str]],
+    ) -> None:
+        if "lambda" in TargetGroupArn:
+            raise ClientError(
+                {"Error": {"Code": "ValidationError", "Message": "not supported"}},
+                "ModifyTargetGroupAttributes",
+            )
+        self.modified.append((TargetGroupArn, Attributes))
+
+
+def test_draining_is_shortened_before_the_stack_is_deleted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """
+    スタックを消す直前に、残っている TG の登録解除の待ち時間を 0 秒にする（ECS のサービスの削除が
+    draining の 300 秒を待たないように）。この属性がない Lambda の TG で失敗しても、ほかは続ける。
+    """
+    tg = "AWS::ElasticLoadBalancingV2::TargetGroup"
+    arn = "arn:aws:elasticloadbalancing:ap-northeast-1:123456789012:targetgroup/"
+    session = _DrainingSession(
+        [
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": arn + "ecs/1",
+            },
+            {
+                "ResourceType": "AWS::EC2::VPC",
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": "vpc-1",
+            },
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "CREATE_COMPLETE",
+                "PhysicalResourceId": arn + "lambda/2",
+            },
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "DELETE_COMPLETE",
+                "PhysicalResourceId": arn + "gone/3",
+            },
+            {"ResourceType": tg, "ResourceStatus": "CREATE_FAILED"},
+            {
+                "ResourceType": tg,
+                "ResourceStatus": "UPDATE_COMPLETE",
+                "PhysicalResourceId": arn + "web/4",
+            },
+        ]
+    )
+    _shorten_draining(session, "elbx-test")
+    zero = [{"Key": "deregistration_delay.timeout_seconds", "Value": "0"}]
+    assert session.modified == [(arn + "ecs/1", zero), (arn + "web/4", zero)]
+    assert "TG 2 個" in capsys.readouterr().out
+
+
+def test_deletion_goes_on_when_draining_cannot_be_shortened(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """スタックのリソースを読めなくても、例外にせず削除に進む（遅くなるだけ）。"""
+    session = _DrainingSession([], fail_listing=True)
+    _shorten_draining(session, "elbx-test")
+    assert session.modified == []
+    assert "削除は続けます" in capsys.readouterr().out
+
+
+def test_listener_with_authentication_gets_ordered_actions() -> None:
+    """認証してから転送するリスナーは、書いた順に Order を付けた複数のアクションになる。"""
+    template = build_template(load_infra(), _opts())
+    actions = template["Resources"]["LbV6AlbListener443"]["Properties"]["DefaultActions"]
+    assert [(a["Type"], a["Order"]) for a in actions] == [("authenticate-oidc", 1), ("forward", 2)]
+    assert actions[0]["AuthenticateOidcConfig"]["Issuer"] == "https://idp.elbx-test.internal"
+    assert actions[0]["AuthenticateOidcConfig"]["OnUnauthenticatedRequest"] == "authenticate"
+
+
+def _real_env() -> TestEnv:
+    """Amazon が `2406:da14:e5a:6f00::/56` を割り当てた、実際の AWS の環境（接続はしない）。"""
+    env = TestEnv(session=None, region="ap-northeast-1", infra=load_infra())
+    env.real_vpc_ipv6_cidr = "2406:da14:e5a:6f00::/56"
+    return env
+
+
+@pytest.mark.parametrize(
+    ("written", "real"),
+    [
+        ("2001:db8:1:1::31", "2406:da14:e5a:6f01::31"),
+        ("2001:0DB8:0001:0001:0000:0000:0000:0031", "2406:DA14:0E5A:6F01:0000:0000:0000:0031"),
+        ("2001:db8:1:2::50", "2406:da14:e5a:6f02::50"),
+        ("2001:db8:1:1::99", "2406:da14:e5a:6f01::99"),
+        ("2001:db8:9::1", "2001:db8:9::1"),
+        ("10.0.1.5", "10.0.1.5"),
+        ("http://v6.elbx-test.internal/app", "http://v6.elbx-test.internal/app"),
+    ],
+    ids=["address", "written_in_full", "other_subnet", "source_ip", "outside_vpc", "ipv4", "url"],
+)
+def test_ipv6_addresses_in_commands_are_read_as_the_real_ones(written: str, real: str) -> None:
+    """ケースのコマンドの IPv6 アドレスは、実際の AWS では割り当てられた /56 の同じ位置に読む。"""
+    assert _real_env().command_arg(written) == real
+    moto = TestEnv(session=None, region="ap-northeast-1", infra=load_infra())
+    assert moto.command_arg(written) == written
+
+
+def test_real_ipv6_addresses_are_shown_as_placeholders() -> None:
+    """実際の AWS の IPv6 は環境を作るたびに変わるので、サブネットの key を使った表記で比べる。"""
+    text = (
+        "ip=2406:da14:e5a:6f01::31 [10.0.1.0/24, 2406:da14:e5a:6f01::/64] "
+        "from 2406:da14:e5a:6f00::/56, 2406:da14:e5a:6f03::50"
+    )
+    for real, shown in _real_env().placeholders():
+        text = text.replace(real, shown)
+    assert text == (
+        "ip=<ipv6:public_1a>::31 [10.0.1.0/24, <ipv6:public_1a>::/64] "
+        "from <vpc-ipv6-cidr>, <ipv6:v6only_1a>::50"
+    )
+
+
+def test_targets_that_cannot_become_healthy_are_known_before_waiting() -> None:
+    """どのリソースのものでもない IPv6 のターゲットは、ヘルスの安定待ちで待ち続けない。"""
+    assert never_healthy_targets(load_infra(), _real_env()) == {
+        "2406:da14:e5a:6f02::50",
+        "2406:da14:e5a:6f03::50",
+    }
 
 
 def test_internet_facing_load_balancers_have_security_groups() -> None:
@@ -196,7 +411,12 @@ def test_template_applies_name_prefix_suffix_boundary_and_iam_path() -> None:
         lb["Properties"]["Name"]
         for lb in _resources(template, "AWS::ElasticLoadBalancingV2::LoadBalancer")
     ]
-    assert names == ["ishi-prod-web-alb-t1", "ishi-edge-ingress-nlb-t1", "ishi-batch-nlb-t1"]
+    assert names == [
+        "ishi-prod-web-alb-t1",
+        "ishi-edge-ingress-nlb-t1",
+        "ishi-batch-nlb-t1",
+        "ishi-v6-dualstack-alb-t1",
+    ]
     tg_names = [
         tg["Properties"]["Name"]
         for tg in _resources(template, "AWS::ElasticLoadBalancingV2::TargetGroup")
@@ -395,7 +615,9 @@ def test_run_case_command_replaces_resource_names(monkeypatch: pytest.MonkeyPatc
         return 0
 
     monkeypatch.setattr(cli, "main", fake_main)
-    env = SimpleNamespace(client=lambda: None, command_names={"prod-web-alb": "x-prod-web-alb-y"})
+    env = TestEnv(session=None, region="ap-northeast-1", infra=load_infra())
+    env.command_names = {"prod-web-alb": "x-prod-web-alb-y"}
+    env.client = lambda: None  # type: ignore[method-assign,assignment,return-value]
     case = SimpleNamespace(state_data=None)
     # pytest-casebook が hook に渡す argv（command_prefix の elbx とコマンドを合わせたもの）
     argv = ["elbx", "route", "https://api.elbx-test.internal/", "--lb", "prod-web-alb"]

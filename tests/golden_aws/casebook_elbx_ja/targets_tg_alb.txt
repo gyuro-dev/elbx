@@ -6,4 +6,4 @@
 ----- stdout -----
 TARGET GROUP   KIND  TARGET ID                                                                                                RESOURCE / NAME    PRIVATE IP  PORT  AZ  SUBNET                                       SECURITY GROUPS                     ELB HEALTH  STATE   REASON
 -------------  ----  -------------------------------------------------------------------------------------------------------  -----------------  ----------  ----  --  -------------------------------------------  ----------------------------------  ----------  ------  ------
-nlb-to-alb-tg  alb   <lb-arn:web_alb>  ALB: prod-web-alb  -           443   -   public-subnet-1c (<subnet:public_1c>)  prod-alb-sg (<sg:alb_sg>)  healthy     active  -
+nlb-to-alb-tg  alb   <lb-arn:web_alb>  ALB: prod-web-alb  -           443   -   public-subnet-1a (<subnet:public_1a>)  prod-alb-sg (<sg:alb_sg>)  healthy     active  -

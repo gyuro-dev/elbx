@@ -336,6 +336,7 @@ Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
 - The path is percent-decoded (`%2F` becomes `/` too) and its `.` and `..` segments are removed before it is matched
 - When another load balancer is registered in a target group of the matched rule, evaluation continues on that load balancer's listener for the target's port. This covers an ALB registered in an `alb` target group of an NLB, and the node IPs of a load balancer registered in an `ip` target group
 - A target group of weight 0 receives no requests, so its line says `(receives no requests)` and its targets and downstream load balancers are not followed
+- A rule with an authentication action (Cognito / OIDC) is evaluated as if the authentication succeeded, and the forward after it is followed
 - Only listener rules are evaluated; whether security groups, network ACLs and route tables let the traffic through is not checked
 
 </details>
@@ -363,6 +364,8 @@ TARGET GROUP    KIND    TARGET ID            RESOURCE / NAME                    
 --------------  ------  -------------------  ---------------------------------  ...  ----------  -------  -------------------------------  --------------------------------------------  ------------------------------------------------------------------------------
 prod-canary-tg  ec2     i-f35eac4266f7e9663  canary-prod-01                     ...  draining    running  Target.DeregistrationInProgress  Target deregistration is in progress          HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-lambda-tg  lambda  arn:aws:lambda:...   Lambda: prod-auth-fn (python3.12)  ...  initial     Active   Elb.RegistrationInProgress       Target registration is in progress            -
+prod-v6-ip-tg   ip      2001:db8:1:2::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
+prod-v6-ip-tg   ip      2001:db8:1:3::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-web-tg     ec2     i-f75dd6e70a2a90cf1  web-prod-02                        ...  unhealthy   running  Target.FailedHealthChecks        Health checks failed with these codes: [502]  HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 ```
 
@@ -389,7 +392,7 @@ prod-web-tg     ec2     i-88c6e44c0bb0ea3e6  web-prod-01                        
 | `LB` | every target group | The name or ARN of a load balancer; only its target groups are shown. When omitted (and without `--tg`), every target group is shown, including those not attached to a load balancer. |
 | `--tg TG` | - | Only this target group (name or ARN). Give either `LB` or `--tg`, not both. |
 | `-s`, `--search TEXT` | - | Only the target groups whose name contains this text (case-insensitive). Can be combined with `LB` (but not with `--tg`). |
-| `--unhealthy` | everything | Only the targets that need attention: those that are not healthy (`unhealthy` / `draining` / `initial` / `unused` / `unavailable`), minus the states the configuration itself causes. Those are `unavailable` with `Target.HealthCheckDisabled` (health checks turned off, the default for a Lambda target group) and `unused` in a target group that no load balancer uses. A stopped instance (`unused`) in a target group that is in use is still shown. Adds two columns: `DETAIL` (a description of the state) and `HEALTH CHECK` (protocol, port, path, success codes, interval, timeout, thresholds). When nothing matches, it prints "No targets need attention.". With `--json`, the JSON is filtered the same way. |
+| `--unhealthy` | everything | Only the targets that need attention: those that are not healthy (`unhealthy` / `draining` / `initial` / `unused` / `unavailable`), minus the states the configuration itself causes. Those are `unavailable` with `Target.HealthCheckDisabled` (health checks turned off, the default for a Lambda target group) and `unused` in a target group that no load balancer uses. A stopped instance (`unused`) in a target group that is in use is still shown. Adds two columns: `DETAIL` (a description of the state) and `HEALTH CHECK` (protocol, port, path, success codes, interval, timeout, thresholds). When nothing matches, it prints "No targets need attention.". With `--json`, the JSON is filtered the same way (`summary` keeps the counts of the whole target group, before filtering). |
 | `--json` | text | An array of target groups as JSON, with the health check settings, the attributes, the counts (`summary`: `by_state` per state and `attention`) and the details of every target (EC2 / ECS / Lambda / ENI / downstream load balancer). |
 
 The `KIND` column is what the target is (`ec2` / `ecs` / `lambda` / `alb` / `nlb` / `eni` / `ip`). The `STATE` column is the state of the resource itself (`running` for EC2, `RUNNING` for ECS, `active` for a load balancer, ...).
@@ -447,12 +450,12 @@ elbx ls -s batch
 <summary>Example: <code>elbx ls</code></summary>
 
 ```text
-NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)  ROUTE53 / DNS NAME
-----------------  -----------  --------------------  ------  ---------------------  ------------------  -----------------------  -------------------------------------------------------------------------------------------------
-prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
-edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
-batch-nlb         network      internal              active  vpc-c05aed80b218ef684  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
-v6-dualstack-alb  application  internal (dualstack)  active  vpc-c05aed80b218ef684  HTTP:80             3/3 (1 TGs)              v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
+NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
+----------------  -----------  --------------------  ------  ---------------------  ------------------  -------------------------  -------------------------------------------------------------------------------------------------
+prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)                api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)                edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+batch-nlb         network      internal              active  vpc-c05aed80b218ef684  TCP:9090            1/1 (1 TGs)                batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  1/3 (1 TGs, attention: 2)  v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
 ```
 
 </details>
@@ -713,13 +716,13 @@ An empty list such as `names=[]` means "zero names" and gives an empty result (o
 <details>
 <summary><b>Recipes (Python)</b></summary>
 
-#### Unhealthy targets in the whole account (`elbx targets --unhealthy` on the CLI)
+#### Targets that need attention in the whole account (`elbx targets --unhealthy` on the CLI)
 
 ```python
 for lb in client.list_load_balancers():
     for tg in lb.target_groups:
         for t in tg.targets:
-            if t.health_state != "healthy":
+            if tg.needs_attention(t):  # not healthy, minus e.g. a Lambda with health checks off
                 print(lb.name, tg.name, t.display_name, t.health_state, t.health_reason)
 ```
 
@@ -740,13 +743,18 @@ for tg in client.list_target_groups():
 from elbx import LoadBalancerView
 
 
-def walk(lb: LoadBalancerView, depth: int = 0) -> None:
+def walk(lb: LoadBalancerView, depth: int = 0, seen: set[str] | None = None) -> None:
+    seen = set() if seen is None else seen
     print("  " * depth + f"{lb.type}: {lb.name}")
     for t in lb.all_targets:
-        if t.downstream_lb is not None:
-            walk(t.downstream_lb, depth + 1)  # downstream load balancer (an ALB or an NLB)
-        else:
+        down = t.downstream_lb  # downstream load balancer (an ALB or an NLB)
+        if down is None:
             print("  " * (depth + 1) + f"{t.target_kind}: {t.display_name}")
+        elif (
+            down.arn not in seen
+        ):  # follow a load balancer once (one node per AZ, several listeners)
+            seen.add(down.arn)
+            walk(down, depth + 1, seen)
 
 
 walk(client.get_load_balancer("edge-ingress-nlb"))
@@ -988,11 +996,12 @@ flowchart LR
     ALB -->|"/batch/* (ip TG)"| ENI["NLB node IP<br/>10.0.1.90 (ENI)"]
     ENI -->|"found from the ENI description"| NLB2["batch-nlb<br/>TCP:9090 (with SG)"]
     NLB2 --> B["EC2 batch-worker-01"]
-    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80"]
+    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80 / HTTPS:443 (OIDC authentication)"]
     ALB6 -->|"IPv6 ip TG"| V6["EC2 v6-web-01 / IPv6 IPs"]
 ```
 
-The IPv6 parts (the dual-stack ALB and so on) are built only on moto (on real AWS, Amazon assigns the IPv6 CIDRs, so fixed addresses cannot be used).
+The IPv6 parts (the dual-stack ALB and so on) are written with the documentation prefix `2001:db8:1::/56`. On real AWS they are built at the same positions in the /56 that Amazon assigns.\
+Two of the IPv6 IP targets belong to no resource, so nothing answers their health checks and they stay `unhealthy` (`Target.Timeout`); moto is made to report the same state.
 
 #### Tests on real AWS (this costs money)
 

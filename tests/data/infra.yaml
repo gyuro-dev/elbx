@@ -12,10 +12,13 @@
 #   prod-web-alb ──> EC2 (web / canary) / IP->EC2 / ECS Fargate / Lambda
 #                └── /batch/* ──> NLB のノードの IP（ip TG） ──> batch-nlb ──> EC2 batch-worker-01
 #   v6.elbx-test.internal (AAAA Alias) ──> v6-dualstack-alb ──> IPv6 の ip TG ──> EC2 v6-web-01 / IP だけ
+#                                          └── HTTPS:443 は OIDC で認証してから同じ TG へ転送
 #
-#   IPv6 の部分（moto_only: true のリソースと、サブネットの ipv6_cidr）は moto だけで作ります。
-#   実際の AWS では VPC の IPv6 CIDR を Amazon が割り当てるため、ここに書いた固定の IPv6 アドレス
-#   （2001:db8::/32 は文書用のアドレス）では作れません。
+#   IPv6 のアドレス（2001:db8:1::/56。2001:db8::/32 は文書用のアドレス）について:
+#   実際の AWS では VPC の IPv6 CIDR を Amazon が割り当てるため、ここに書いたアドレスそのものでは
+#   作れません。実際の AWS では「割り当てられた /56 の中の、同じ位置のアドレス」で作ります
+#   （2001:db8:1:1::31 は、割り当てられた /56 の 1 番目の /64 の ::31）。ケースのコマンドに書いた
+#   アドレスも同じ規則で読み替えて実行し、出力は <ipv6:public_1a>::31 のような表記にして比べます。
 #
 #   ALB のターゲットに NLB を直接登録する方法（target_type: alb）は AWS にないため、
 #   ALB -> NLB は「NLB のノードの IP を ALB の ip TG に登録する」形で表しています。
@@ -26,15 +29,16 @@
 #     IPv6 アドレスを持つ EC2）には必ず SG を付け、
 #     SG のインバウンドは VPC 内（vpc_cidr / vpc_ipv6_cidr）からだけを許可する
 #   - EC2 にはパブリック IP を付けない
+#   - IPv6 のアドレスはグローバルなので、VPC にインターネットへの IPv6 の経路（::/0）を作らない
 #   - SG なしの NLB は SG で遮断できないため、internal にする
 # =============================================================================
 
 region: ap-northeast-1
 vpc_cidr: 10.0.0.0/16
-# 外部公開の方針のチェックで、SG の IPv6 の送信元が VPC 内かを判定するために使う（moto 用）
+# VPC の IPv6 の CIDR（実際の AWS では Amazon が割り当てた /56 に読み替える）
 vpc_ipv6_cidr: 2001:db8:1::/56
 
-# ipv6_cidr は moto 用。cidr と両方書くとデュアルスタック、ipv6_cidr だけだと IPv6 専用のサブネット
+# cidr と ipv6_cidr を両方書くとデュアルスタック、ipv6_cidr だけだと IPv6 専用のサブネット
 subnets:
   - key: public_1a
     name: public-subnet-1a
@@ -51,7 +55,6 @@ subnets:
     name: v6only-subnet-1a
     az: ap-northeast-1a
     ipv6_cidr: 2001:db8:1:3::/64
-    moto_only: true
 
 # ingress の書き方:
 #   protocol: tcp / udp / all、port: 443 または "80-8080"（all のときは省略）
@@ -73,11 +76,18 @@ security_groups:
   # デュアルスタックの ALB 用の SG
   - key: v6_alb_sg
     name: v6-alb-sg
-    description: Allow HTTP from VPC over IPv4 and IPv6
-    moto_only: true
+    description: Allow HTTP and HTTPS from VPC over IPv4 and IPv6
     ingress:
       - { protocol: tcp, port: 80, cidr: 10.0.0.0/16, description: HTTP from VPC }
       - { protocol: tcp, port: 80, ipv6: "2001:db8:1::/56", description: HTTP from VPC (IPv6) }
+      - { protocol: tcp, port: 443, cidr: 10.0.0.0/16, description: HTTPS from VPC }
+      - { protocol: tcp, port: 443, ipv6: "2001:db8:1::/56", description: HTTPS from VPC (IPv6) }
+  # デュアルスタックの EC2 に足す SG（ALB からの IPv6 のヘルスチェックを通す）
+  - key: v6_web_sg
+    name: v6-web-sg
+    description: Allow the application port from VPC over IPv6
+    ingress:
+      - { protocol: tcp, port: 8080, ipv6: "2001:db8:1::/56", description: App from VPC (IPv6) }
 
 # 実際の AWS では、同じドメインの自己署名証明書を作って ACM にインポートします
 certificates:
@@ -85,7 +95,7 @@ certificates:
     domain_name: "*.elbx-test.internal"
     san: ["*.elbx-test.internal", elbx-test.internal]
 
-# すべて security_groups の先頭（alb_sg）を付けて起動します。
+# security_groups を書かなければ、security_groups の先頭（alb_sg）を付けて起動します。
 # instance_type は moto 用です（実際の AWS では費用を抑えるため、すべて t4g.nano で起動します）
 ec2_instances:
   - { key: web_01, name: web-prod-01, instance_type: t3.medium, subnet: public_1a, private_ip: 10.0.1.11 }
@@ -96,7 +106,7 @@ ec2_instances:
   - { key: batch_01, name: batch-worker-01, instance_type: t3.large, subnet: public_1a, private_ip: 10.0.1.71 }
   # デュアルスタックの EC2（ipv6_ips の IPv6 アドレスを ENI に割り当てる）
   - { key: v6_web_01, name: v6-web-01, instance_type: t3.small, subnet: public_1a, private_ip: 10.0.1.31,
-      ipv6_ips: ["2001:db8:1:1::31"], moto_only: true }
+      ipv6_ips: ["2001:db8:1:1::31"], security_groups: [alb_sg, v6_web_sg] }
 
 lambda_functions:
   - key: auth_fn
@@ -145,7 +155,7 @@ target_groups:
   #   2001:db8:1:3::50 は IPv6 専用サブネットの IP（IPv4 の CIDR がなくてもサブネットを特定する）
   - { key: v6_ip_tg, name: prod-v6-ip-tg, protocol: HTTP, port: 8080, target_type: ip,
       ip_address_type: ipv6, health_check_path: /healthz,
-      ips: ["2001:db8:1:1::31", "2001:db8:1:2::50", "2001:db8:1:3::50"], moto_only: true }
+      ips: ["2001:db8:1:1::31", "2001:db8:1:2::50", "2001:db8:1:3::50"] }
   # どの ELB にも紐づかない TG
   - { key: orphan_tg, name: orphan-unattached-tg, protocol: HTTP, port: 80, target_type: instance,
       health_check_path: /, instances: [standby_01] }
@@ -158,6 +168,11 @@ target_groups:
 #               forward_weighted: { TGのkey: 重み, ... }
 #               redirect: { protocol, host, port, path, query, status_code }
 #               fixed_response: { status_code, content_type, message_body }
+#               authenticate_oidc: { issuer, authorization_endpoint, token_endpoint,
+#                                    user_info_endpoint, client_id, client_secret,
+#                                    on_unauthenticated_request }
+#               action / default_action をリストで書くと、書いた順に行う複数のアクションになる
+#               （認証してから転送する、など）
 load_balancers:
   # internet-facing（グローバル IP あり）。SG で VPC 内からだけを許可する
   - key: web_alb
@@ -236,7 +251,9 @@ load_balancers:
     listeners:
       - { protocol: TCP, port: 9090, default_action: { forward: batch_nlb_tg } }
 
-  # デュアルスタックの ALB。IPv6 の送信元だけを IPv6 の TG に転送し、それ以外は 403 を返す
+  # デュアルスタックの ALB。HTTP:80 は IPv6 の送信元だけを IPv6 の TG に転送し、それ以外は 403 を返す。
+  # HTTPS:443 は OIDC で認証してから同じ TG に転送する（IdP は実在しない。設定の表示を確かめるため。
+  # client_secret は秘密ではないダミーの値で、AWS の API は返さない）
   - key: v6_alb
     name: v6-dualstack-alb
     type: application
@@ -244,8 +261,21 @@ load_balancers:
     ip_address_type: dualstack
     subnets: [public_1a, public_1c]
     security_groups: [v6_alb_sg]
-    moto_only: true
     listeners:
+      - protocol: HTTPS
+        port: 443
+        ssl_policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+        certificate: wildcard_cert
+        default_action:
+          - authenticate_oidc:
+              issuer: https://idp.elbx-test.internal
+              authorization_endpoint: https://idp.elbx-test.internal/authorize
+              token_endpoint: https://idp.elbx-test.internal/token
+              user_info_endpoint: https://idp.elbx-test.internal/userinfo
+              client_id: elbx-test-client
+              client_secret: elbx-test-dummy-not-a-secret
+              on_unauthenticated_request: authenticate
+          - forward: v6_ip_tg
       - protocol: HTTP
         port: 80
         default_action:
@@ -275,4 +305,4 @@ route53_zones:
       - { name: api.elbx-test.internal, type: A, alias_to: web_alb }
       - { name: app.elbx-test.internal, type: CNAME, cname_to: web_alb, ttl: 300 }
       - { name: edge.elbx-test.internal, type: A, alias_to: edge_nlb }
-      - { name: v6.elbx-test.internal, type: AAAA, alias_to: v6_alb, moto_only: true }
+      - { name: v6.elbx-test.internal, type: AAAA, alias_to: v6_alb }

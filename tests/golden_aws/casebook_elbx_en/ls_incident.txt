@@ -4,8 +4,9 @@
 # state: incident
 # exit_code: 0
 ----- stdout -----
-NAME              TYPE         SCHEME           STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
-----------------  -----------  ---------------  ------  ---------------------  ------------------  -------------------------  ------------------------------------------------------------------
-edge-ingress-nlb  network      internal         active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)                <dns:edge_nlb>
-batch-nlb         network      internal         active  <vpc>  TCP:9090            1/1 (1 TGs)                <dns:batch_nlb>
-prod-web-alb      application  internet-facing  active  <vpc>  HTTP:80, HTTPS:443  4/7 (6 TGs, attention: 3)  <dns:web_alb>
+NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
+----------------  -----------  --------------------  ------  ---------------------  ------------------  -------------------------  ---------------------------------------------------------------------
+edge-ingress-nlb  network      internal              active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)                <dns:edge_nlb>
+batch-nlb         network      internal              active  <vpc>  TCP:9090            1/1 (1 TGs)                <dns:batch_nlb>
+v6-dualstack-alb  application  internal (dualstack)  active  <vpc>  HTTP:80, HTTPS:443  1/3 (1 TGs, attention: 2)  <dns:v6_alb>
+prod-web-alb      application  internet-facing       active  <vpc>  HTTP:80, HTTPS:443  4/7 (6 TGs, attention: 3)  <dns:web_alb>

@@ -1,0 +1,7 @@
+# case: targets_unhealthy_none
+# description: when no target needs attention, --unhealthy prints only a message (a Lambda unavailable because health checks are disabled is not counted)
+# command: elbx targets prod-web-alb --unhealthy --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+No targets need attention.

@@ -339,6 +339,7 @@ POST https://api.elbx-test.internal/x?mode=fast
 - パスは、`%XX` をデコードし（`%2F` も `/` になります）、`.` と `..` の部分を取り除いてから照合します
 - 一致したルールの転送先 TG に別の ELB が登録されていれば、その ELB の、ターゲットのポートと同じポートのリスナーで続けて評価します。対象は、NLB の `alb` タイプの TG に登録された ALB と、ip タイプの TG に IP で登録された ELB のノードです
 - 重み 0 の TG にはリクエストが届かないので、TG の行に `(リクエストは届きません)` と書き、ターゲットと下流の ELB はたどりません
+- 認証のアクション（Cognito / OIDC）があるルールは、認証が通ったものとして、その先の転送を評価します
 - 評価するのはリスナールールだけです。SG・NACL・ルートテーブルで通信が通るかは判定しません
 
 </details>
@@ -367,6 +368,8 @@ TARGET GROUP    KIND    TARGET ID            RESOURCE / NAME                    
 --------------  ------  -------------------  ---------------------------------  ...  ----------  -------  -------------------------------  --------------------------------------------  ------------------------------------------------------------------------------
 prod-canary-tg  ec2     i-f35eac4266f7e9663  canary-prod-01                     ...  draining    running  Target.DeregistrationInProgress  Target deregistration is in progress          HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-lambda-tg  lambda  arn:aws:lambda:...   Lambda: prod-auth-fn (python3.12)  ...  initial     Active   Elb.RegistrationInProgress       Target registration is in progress            -
+prod-v6-ip-tg   ip      2001:db8:1:2::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
+prod-v6-ip-tg   ip      2001:db8:1:3::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-web-tg     ec2     i-f75dd6e70a2a90cf1  web-prod-02                        ...  unhealthy   running  Target.FailedHealthChecks        Health checks failed with these codes: [502]  HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 ```
 
@@ -393,7 +396,7 @@ prod-web-tg     ec2     i-88c6e44c0bb0ea3e6  web-prod-01                        
 | `LB` | すべての TG | ELB の名前か ARN。その ELB の TG だけを表示します。省略すると（`--tg` もなければ）、ELB に紐づいていない TG も含めて全 TG です。 |
 | `--tg TG` | - | この TG（名前か ARN）だけ。`LB` とは併用できません。 |
 | `-s`, `--search TEXT` | - | 名前にこの文字列を含む TG だけ（大文字小文字は区別しない）。`LB` とは併用でき、`--tg` とはできません。 |
-| `--unhealthy` | すべて表示 | 調べるべきターゲットだけに絞ります。対象は healthy 以外（`unhealthy` / `draining` / `initial` / `unused` / `unavailable`）のうち、設定上そうなるものを除いたターゲットです。除くのは、ヘルスチェックを無効にした TG の `unavailable`（`Target.HealthCheckDisabled`。Lambda の TG の既定）と、どの ELB にも使われていない TG の `unused` です。ELB に使われている TG の停止中のインスタンス（`unused`）は出します。`DETAIL`（状態の説明）と `HEALTH CHECK`（プロトコル・ポート・パス・成功コード・間隔・タイムアウト・閾値）の列が加わります。該当がなければ「調べるべきターゲットはありません。」と出ます。`--json` も同じように絞られます。 |
+| `--unhealthy` | すべて表示 | 調べるべきターゲットだけに絞ります。対象は healthy 以外（`unhealthy` / `draining` / `initial` / `unused` / `unavailable`）のうち、設定上そうなるものを除いたターゲットです。除くのは、ヘルスチェックを無効にした TG の `unavailable`（`Target.HealthCheckDisabled`。Lambda の TG の既定）と、どの ELB にも使われていない TG の `unused` です。ELB に使われている TG の停止中のインスタンス（`unused`）は出します。`DETAIL`（状態の説明）と `HEALTH CHECK`（プロトコル・ポート・パス・成功コード・間隔・タイムアウト・閾値）の列が加わります。該当がなければ「調べるべきターゲットはありません。」と出ます。`--json` も同じように絞られます（`summary` は絞る前の、TG 全体の件数です）。 |
 | `--json` | テキスト | TG の配列を JSON で出力します: ヘルスチェック設定、属性、件数の集計（`summary`。状態ごとの `by_state` と調べるべき数 `attention`）、各ターゲットの詳細（EC2 / ECS / Lambda / ENI / 下流の ELB）。 |
 
 `KIND` 列はターゲットの正体（`ec2` / `ecs` / `lambda` / `alb` / `nlb` / `eni` / `ip`）、\
@@ -457,7 +460,7 @@ NAME              TYPE         SCHEME                STATE   VPC                
 prod-web-alb      application  internet-facing       active  vpc-a4f21b708b96d5be5  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
 edge-ingress-nlb  network      internal              active  vpc-a4f21b708b96d5be5  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
 batch-nlb         network      internal              active  vpc-a4f21b708b96d5be5  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
-v6-dualstack-alb  application  internal (dualstack)  active  vpc-a4f21b708b96d5be5  HTTP:80             3/3 (1 TGs)              v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  vpc-a4f21b708b96d5be5  HTTP:80, HTTPS:443  1/3 (1 TGs, 要確認: 2)   v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
 ```
 
 </details>
@@ -727,13 +730,13 @@ print(elbx.format_route_simulation(result, use_color=False))
 <details>
 <summary><b>レシピ集（Python）</b></summary>
 
-#### アカウント全体の unhealthy なターゲット（CLI なら `elbx targets --unhealthy`）
+#### アカウント全体の、調べるべきターゲット（CLI なら `elbx targets --unhealthy`）
 
 ```python
 for lb in client.list_load_balancers():
     for tg in lb.target_groups:
         for t in tg.targets:
-            if t.health_state != "healthy":
+            if tg.needs_attention(t):  # healthy 以外。ヘルスチェックが無効な Lambda などは除く
                 print(lb.name, tg.name, t.display_name, t.health_state, t.health_reason)
 ```
 
@@ -754,13 +757,18 @@ for tg in client.list_target_groups():
 from elbx import LoadBalancerView
 
 
-def walk(lb: LoadBalancerView, depth: int = 0) -> None:
+def walk(lb: LoadBalancerView, depth: int = 0, seen: set[str] | None = None) -> None:
+    seen = set() if seen is None else seen
     print("  " * depth + f"{lb.type}: {lb.name}")
     for t in lb.all_targets:
-        if t.downstream_lb is not None:
-            walk(t.downstream_lb, depth + 1)  # 下流の ELB（ALB も NLB もある）
-        else:
+        down = t.downstream_lb  # 下流の ELB（ALB も NLB もある）
+        if down is None:
             print("  " * (depth + 1) + f"{t.target_kind}: {t.display_name}")
+        elif (
+            down.arn not in seen
+        ):  # 同じ ELB は 1 回だけたどる（AZ ごとのノードや複数のリスナーから届く）
+            seen.add(down.arn)
+            walk(down, depth + 1, seen)
 
 
 walk(client.get_load_balancer("edge-ingress-nlb"))
@@ -1004,11 +1012,12 @@ flowchart LR
     ALB -->|"/batch/* (ip TG)"| ENI["NLB のノードの IP<br/>10.0.1.90 (ENI)"]
     ENI -->|"ENI の説明から特定"| NLB2["batch-nlb<br/>TCP:9090 (SG あり)"]
     NLB2 --> B["EC2 batch-worker-01"]
-    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80"]
+    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80 / HTTPS:443（OIDC の認証）"]
     ALB6 -->|"IPv6 の ip TG"| V6["EC2 v6-web-01 / IPv6 の IP"]
 ```
 
-IPv6 の部分（デュアルスタックの ALB など）は moto だけで作ります（実際の AWS では IPv6 の CIDR を Amazon が割り当てるため、固定のアドレスで作れません）。
+IPv6 の部分（デュアルスタックの ALB など）のアドレスは、文書用の `2001:db8:1::/56` で書いています。実際の AWS では、Amazon が割り当てる /56 の中の、同じ位置のアドレスで作ります。\
+IPv6 の IP のターゲットのうち 2 つは、どのリソースのものでもなく、ヘルスチェックに応える相手がいないので、`unhealthy`（`Target.Timeout`）のままです（moto でも同じ状態にしています）。
 
 #### 実際の AWS でのテスト（料金がかかります）
 

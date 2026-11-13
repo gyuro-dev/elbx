@@ -44,7 +44,7 @@ from .models import (
     TargetLookupResult,
     TargetView,
 )
-from .simulator import SimulatedRequest, simulate_hop, wildcard_match
+from .simulator import SimulatedRequest, mask_userinfo, simulate_hop, wildcard_match
 
 # 以前どおり elbx.client からも import できるように残す
 __all__ = ["AWSAPIError", "ELBClient", "ELBError", "ResourceNotFoundError"]
@@ -714,7 +714,13 @@ class ELBClient(ELBHydratorMixin):
             q_lower in target.ecs.cluster_name.lower()
             or q_lower in target.ecs.service_name.lower()
             or q_lower in target.ecs.task_id.lower()
-            or (q_lower.startswith("arn:") and q_lower in target.ecs.task_arn.lower())
+            or (
+                q_lower.startswith("arn:")
+                and (
+                    q_lower in target.ecs.task_arn.lower()
+                    or q_lower == target.ecs.cluster_arn.lower()
+                )
+            )
             or q_lower in target.ecs.task_definition.lower()
             or q_lower in target.ecs.container_name.lower()
             or _ip_eq(target.ecs.private_ip)
@@ -801,7 +807,7 @@ class ELBClient(ELBHydratorMixin):
                 url, method=method, headers=headers, source_ip=source_ip
             )
         except ValueError as exc:
-            raise ELBError(t("client.bad_request", url=url, error=exc)) from exc
+            raise ELBError(t("client.bad_request", url=mask_userinfo(url), error=exc)) from exc
 
         if lb_name_or_arn is not None:
             raw_lbs = [self._resolve_raw_load_balancer(lb_name_or_arn)]

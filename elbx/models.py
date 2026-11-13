@@ -25,8 +25,11 @@ TargetKind = Literal["alb", "nlb", "lambda", "ecs", "ec2", "eni", "ip", "instanc
 # `RouteHop.note_code` の値（note があるとき） / what `RouteHop.note_code` can be with a note
 RouteNoteCode = Literal["no_listener", "no_matching_rule", "too_many_hops"]
 
-# json.dumps(ensure_ascii=False) がエスケープしない制御文字（DEL・C1）
-_JSON_RAW_CONTROLS = re.compile(r"[\x7f-\x9f]")
+# `RuleView.actions_summary` の転送アクションの書き出し（hydrator の `_summarize_action` が作る）
+_FORWARD_PREFIX = "Forward -> "
+
+# json.dumps(ensure_ascii=False) がエスケープしない制御文字（DEL・C1）と、表示の向きを変える文字
+_JSON_RAW_CONTROLS = re.compile(r"[\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 
 def _dumps_json(data: object, indent: int = 2) -> str:
@@ -659,6 +662,18 @@ class RuleView:
     target_group_refs: list[RuleTargetGroupRef] = field(default_factory=list)
     # describe_rules の Conditions そのもの（route シミュレーションの評価に使用）
     condition_specs: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def non_forward_actions(self) -> list[str]:
+        """
+        The actions of `actions_summary` other than the forward: an authentication that runs
+        before the forward, a redirect, a fixed response. The forward itself is in
+        `target_group_refs`.
+
+        `actions_summary` のうち、転送以外のアクション（転送の前に行う認証、リダイレクト、固定
+        レスポンス）。転送は `target_group_refs` にある。
+        """
+        return [a for a in self.actions_summary if not a.startswith(_FORWARD_PREFIX)]
 
     @property
     def priority_order(self) -> tuple[int, int]:

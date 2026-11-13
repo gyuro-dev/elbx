@@ -6,4 +6,4 @@
 ----- stdout -----
 LOAD BALANCER     TARGET GROUP   KIND  TARGET ID         RESOURCE / NAME  PRIVATE IP        PORT  ELB HEALTH  STATE
 ----------------  -------------  ----  ----------------  ---------------  ----------------  ----  ----------  -----
-v6-dualstack-alb  prod-v6-ip-tg  ip    2001:db8:1:2::50  -                2001:db8:1:2::50  8080  healthy     -
+v6-dualstack-alb  prod-v6-ip-tg  ip    2001:db8:1:2::50  -                2001:db8:1:2::50  8080  unhealthy   -

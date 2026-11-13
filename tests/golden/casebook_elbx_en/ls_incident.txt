@@ -9,4 +9,4 @@ NAME              TYPE         SCHEME                STATE   VPC                
 prod-web-alb      application  internet-facing       active  <vpc>  HTTP:80, HTTPS:443  4/7 (6 TGs, attention: 3)  prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
 edge-ingress-nlb  network      internal              active  <vpc>  TCP:80, TCP:443     1/1 (1 TGs)                edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
 batch-nlb         network      internal              active  <vpc>  TCP:9090            1/1 (1 TGs)                batch-nlb-1.ap-northeast-1.elb.amazonaws.com
-v6-dualstack-alb  application  internal (dualstack)  active  <vpc>  HTTP:80             3/3 (1 TGs)                v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  <vpc>  HTTP:80, HTTPS:443  1/3 (1 TGs, attention: 2)  v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com

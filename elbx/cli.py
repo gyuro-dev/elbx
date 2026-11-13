@@ -508,14 +508,21 @@ def _with_default_command(parser: argparse.ArgumentParser, argv: list[str]) -> l
     :param argv: コマンドライン引数
     :return: 読む引数
     """
-    if {"-h", "--help", "--version"} & set(argv):
+    options = argv[: argv.index("--")] if "--" in argv else argv
+    if {"-h", "--help", "--version"} & set(options):
         return argv
     first = _first_positional(parser, argv)
     if first is None:
         return ["tree", *argv]
     commands = _subcommands(parser)
     if first not in commands:
-        parser.error(t("cli.arg.unknown_command", command=first, choices=", ".join(commands)))
+        parser.error(
+            t(
+                "cli.arg.unknown_command",
+                command=_escape_controls(first),
+                choices=", ".join(commands),
+            )
+        )
     return argv
 
 
@@ -621,11 +628,16 @@ def _run_targets(elb: ELBClient, args: argparse.Namespace, use_color: bool | Non
             include_attributes=args.json,
             expand_downstream=args.json,
         )
+    all_tgs = {tg.arn: tg for tg in tgs}
     if args.unhealthy:
         tgs = _only_unhealthy(tgs)
 
     if args.json:
-        _print_json([tg.to_dict() for tg in tgs])
+        # --unhealthy で絞るのは targets だけ。summary は TG 全体の件数のままにする（絞ったあとの
+        # 件数にすると、9 台が healthy の TG でも healthy: 0 になり、全滅に見える）
+        _print_json(
+            [{**tg.to_dict(), "summary": all_tgs[tg.arn].to_dict()["summary"]} for tg in tgs]
+        )
     elif args.unhealthy and not tgs:
         print(t("cli.no_unhealthy"))
     else:
@@ -979,7 +991,11 @@ def _execute(args: argparse.Namespace, client: ELBClient | None, warnings: _Warn
             # `elbx ls | head` など。読み手が満足して閉じただけなのでエラーにしない。
             # 終了時の flush でまた失敗しないよう、標準出力を捨て先に向ける
             with contextlib.suppress(OSError, ValueError):
-                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                try:
+                    os.dup2(devnull, sys.stdout.fileno())
+                finally:
+                    os.close(devnull)
             return 0
         print(t("cli.unexpected_error", message=_escape_controls(str(exc))), file=sys.stderr)
         return 1

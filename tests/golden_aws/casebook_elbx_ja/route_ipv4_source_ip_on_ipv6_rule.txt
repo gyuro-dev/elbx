@@ -1,0 +1,14 @@
+# case: route_ipv4_source_ip_on_ipv6_rule
+# description: IPv4 の送信元は IPv6 の CIDR の source-ip 条件に一致せず、default ルールになる
+# command: elbx route http://v6.elbx-test.internal/app --source-ip 10.0.1.5 --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://v6.elbx-test.internal/app
+
+入口: [APPLICATION] v6-dualstack-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF SourceIP in [<vpc-ipv6-cidr>]
+      SourceIP '10.0.1.5' は [<vpc-ipv6-cidr>] のいずれにも一致しません
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => FixedResponse (403, text/plain)

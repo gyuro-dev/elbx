@@ -9,11 +9,11 @@ POST https://api.elbx-test.internal/x?Mode=FAST
 入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
   ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
       Path '/x' は [/v1/*] のいずれにも一致しません
-  ✓ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
-      Header(X-Env) 'IP-Direct' は [ip-direct] に一致
-      SourceIP '203.0.113.5' は [203.0.113.0/24] に一致
-      Query 'Mode=FAST' は [mode=fast] に一致
+  ✓ Rule [priority:20] IF Method in [POST, GET] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24] AND Header(X-Env) in [ip-direct]
       Method 'POST' は [POST, GET] に一致
+      Query 'Mode=FAST' は [mode=fast] に一致
+      SourceIP '203.0.113.5' は [203.0.113.0/24] に一致
+      Header(X-Env) 'IP-Direct' は [ip-direct] に一致
   => Forward -> prod-ip-tg
      TG: prod-ip-tg [1/1 healthy]
        - [● healthy] web-prod-01 (10.0.1.11) port=9000

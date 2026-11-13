@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import io
+import ipaddress
 import os
 import re
 import zipfile
@@ -58,10 +59,11 @@ def load_infra() -> dict[str, Any]:
 
 def for_real_aws(infra: dict[str, Any]) -> dict[str, Any]:
     """
-    実際の AWS で作る構成を返す（`moto_only: true` のリソースと、サブネットの `ipv6_cidr` を除く）。
+    実際の AWS で作る構成を返す（`moto_only: true` と書いたリソースを除く）。
 
-    IPv6 の構成は moto だけで作る。実際の AWS では VPC の IPv6 CIDR を Amazon が割り当てるため、
-    infra.yaml に書いた固定の IPv6 アドレス（2001:db8::/32 の文書用アドレス）では作れない。
+    今は moto 専用のリソースはない。IPv6 の構成も実際の AWS で作る（VPC の IPv6 CIDR は Amazon が
+    割り当てるので、infra.yaml の文書用アドレスは「割り当てられた /56 の中の同じ位置」に読み替える。
+    `ipv6_offset` / `TestEnv.command_arg`）。実際の AWS で作れない構成を足すときのために残してある。
 
     :param infra: infra.yaml のデータ辞書
     :return: moto 専用の部分を除いた infra のコピー
@@ -70,11 +72,55 @@ def for_real_aws(infra: dict[str, Any]) -> dict[str, Any]:
     for key, value in result.items():
         if isinstance(value, list):
             result[key] = [v for v in value if not (isinstance(v, dict) and v.get("moto_only"))]
-    for sub in result.get("subnets", []):
-        sub.pop("ipv6_cidr", None)
     for zone in result.get("route53_zones", []):
         zone["records"] = [r for r in zone.get("records", []) if not r.get("moto_only")]
     return result
+
+
+def ipv6_offset(infra: dict[str, Any], value: str) -> int:
+    """
+    infra.yaml の IPv6 のアドレスか CIDR が、VPC の IPv6 CIDR（`vpc_ipv6_cidr`）の先頭から
+    どれだけ離れているかを返す。実際の AWS では、割り当てられた /56 の同じ位置に読み替える。
+
+    :param infra: infra.yaml のデータ辞書
+    :param value: IPv6 のアドレス（`2001:db8:1:1::31`）か CIDR（`2001:db8:1:1::/64`）
+    :return: VPC の IPv6 CIDR の先頭からの差
+    :raises ValueError: VPC の IPv6 CIDR の外のアドレスの場合
+    """
+    vpc = ipaddress.IPv6Network(infra["vpc_ipv6_cidr"])
+    address = ipaddress.IPv6Interface(value).ip
+    if address not in vpc:
+        raise ValueError(f"infra.yaml: {value} は vpc_ipv6_cidr（{vpc}）の外です")
+    return int(address) - int(vpc.network_address)
+
+
+def unanswered_ipv6_targets(infra: dict[str, Any]) -> set[str]:
+    """
+    ヘルスチェックに応える相手がいない IPv6 のターゲット（infra.yaml のアドレス）を返す。
+    どのリソースのものでもない IP（「ENI のない IP」を確かめるためのターゲット）で、実際の AWS では
+    いつまでも `unhealthy`（`Target.Timeout`）のままになる。moto でも同じ状態にして比べる。
+
+    :param infra: infra.yaml のデータ辞書
+    :return: ターゲットの IP の集合
+    """
+    owned = {ip for inst in infra["ec2_instances"] for ip in inst.get("ipv6_ips", [])}
+    return {
+        ip
+        for tg in infra["target_groups"]
+        for ip in tg.get("ips", [])
+        if ":" in ip and ip not in owned
+    }
+
+
+def instance_sg_keys(infra: dict[str, Any], inst: dict[str, Any]) -> list[str]:
+    """
+    EC2 インスタンスに付ける SG の key を返す（`security_groups` がなければ先頭の SG）。
+
+    :param infra: infra.yaml のデータ辞書
+    :param inst: infra.yaml の EC2 インスタンスの定義
+    :return: SG の key のリスト
+    """
+    return list(inst.get("security_groups") or [infra["security_groups"][0]["key"]])
 
 
 # =============================================================================
@@ -96,8 +142,6 @@ def check_exposure_policy(infra: dict[str, Any]) -> list[str]:
     :param infra: infra.yaml のデータ辞書
     :return: 違反メッセージのリスト（問題なければ空リスト）
     """
-    import ipaddress
-
     vpc = ipaddress.ip_network(infra["vpc_cidr"])
     vpc_v6 = ipaddress.ip_network(infra["vpc_ipv6_cidr"]) if infra.get("vpc_ipv6_cidr") else None
     sgs = {sg["key"]: sg for sg in infra["security_groups"]}
@@ -118,8 +162,10 @@ def check_exposure_policy(infra: dict[str, Any]) -> list[str]:
     first_sg = infra["security_groups"][0]["key"]
     if infra.get("ecs_clusters"):
         public_sg_keys.setdefault(first_sg, "ECS タスク")
-    if any(inst.get("ipv6_ips") for inst in infra["ec2_instances"]):
-        public_sg_keys.setdefault(first_sg, "IPv6 アドレスを持つ EC2")
+    for inst in infra["ec2_instances"]:
+        if inst.get("ipv6_ips"):
+            for key in instance_sg_keys(infra, inst):
+                public_sg_keys.setdefault(key, f"IPv6 アドレスを持つ EC2 '{inst['name']}'")
 
     for key, owner in public_sg_keys.items():
         for rule in sgs[key].get("ingress", []):
@@ -167,6 +213,60 @@ class TestEnv:
     extra_patterns: list[tuple[re.Pattern[str], str]] = field(default_factory=list)
     # ケースのコマンドに書いた元の名前 -> 実際の名前（実際の AWS で prefix / suffix を付けたとき）
     command_names: dict[str, str] = field(default_factory=dict)
+    # 実際の AWS で Amazon が割り当てた VPC の IPv6 CIDR（moto では空。infra.yaml のアドレスのまま）
+    real_vpc_ipv6_cidr: str = ""
+
+    def real_ipv6(self, value: str) -> str:
+        """
+        infra.yaml の IPv6 のアドレスか CIDR を、実際の AWS のもの（割り当てられた /56 の同じ
+        位置）に読み替える。moto では、そのまま返す。
+
+        :param value: infra.yaml の IPv6 のアドレスか CIDR
+        :return: この環境でのアドレスか CIDR（省略した小文字の表記）
+        """
+        if not self.real_vpc_ipv6_cidr:
+            return value
+        base = int(ipaddress.IPv6Network(self.real_vpc_ipv6_cidr).network_address)
+        address = ipaddress.IPv6Address(base + ipv6_offset(self.infra, value))
+        _, slash, prefix = value.partition("/")
+        return f"{address}{slash}{prefix}"
+
+    def command_arg(self, arg: str) -> str:
+        """
+        ケースのコマンドの引数 1 つを、この環境で実行する形にする。実際の AWS では、リソースの名前に
+        prefix / suffix を付け、infra.yaml の IPv6 アドレスを実際のアドレスに読み替える（省略しない
+        大文字の書き方は、その書き方のまま）。moto では、そのまま返す。
+
+        :param arg: ケースのコマンドに書いた引数
+        :return: 実行するときの引数
+        """
+        if arg in self.command_names:
+            return self.command_names[arg]
+        if not self.real_vpc_ipv6_cidr:
+            return arg
+        try:
+            written = ipaddress.IPv6Address(arg)
+            real = ipaddress.IPv6Address(self.real_ipv6(str(written)))
+        except ValueError:  # IPv6 アドレスではない、または VPC の外のアドレス
+            return arg
+        return str(real) if arg == str(written) else real.exploded.upper()
+
+    def _ipv6_placeholders(self) -> list[tuple[str, str]]:
+        """
+        実際の AWS の IPv6 を、`<ipv6:public_1a>::31`・`<vpc-ipv6-cidr>` の表記にする置き換えを返す
+        （Amazon が割り当てるプレフィックスは、環境を作るたびに変わるため）。
+        """
+        if not self.real_vpc_ipv6_cidr:
+            return []
+        pairs = [(self.real_vpc_ipv6_cidr, "<vpc-ipv6-cidr>")]
+        for sub in self.infra["subnets"]:
+            if sub.get("ipv6_cidr"):
+                network = ipaddress.IPv6Network(self.real_ipv6(sub["ipv6_cidr"]))
+                # "2406:da14:e5a:6f01::" の末尾の "::" を除いた部分が、その /64 の中の
+                # 全アドレスの書き出しになる
+                prefix = str(network.network_address).removesuffix("::")
+                pairs.append((f"{prefix}:", f"<ipv6:{sub['key']}>:"))
+        return pairs
 
     def client(self) -> ELBClient:
         """
@@ -202,6 +302,7 @@ class TestEnv:
         # ELB の ID（ARN の末尾）。ELB の ENI の説明 "ELB net/<名前>/<ID>" などに現れる
         pairs += [(arn.split("/")[-1], f"<lb-id:{key}>") for key, arn in self.lb_arns.items()]
         pairs += [(real, repl) for real, repl in self.extra_placeholders if real and real != repl]
+        pairs += self._ipv6_placeholders()
         # 部分一致で短い ID が先に置き換わらないよう、長いものから置き換える
         return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
 
@@ -318,7 +419,38 @@ def _rule_action(spec: dict[str, Any], tg_arns: dict[str, Any]) -> dict[str, Any
         return {"Type": "redirect", "RedirectConfig": _pascal_keys(body)}
     if kind == "fixed_response":
         return {"Type": "fixed-response", "FixedResponseConfig": _pascal_keys(body)}
+    if kind == "authenticate_oidc":
+        return {"Type": "authenticate-oidc", "AuthenticateOidcConfig": _pascal_keys(body)}
     raise ValueError(f"infra.yaml: 未対応のアクションです: {kind}")
+
+
+def action_specs(spec: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    `infra.yaml` の `action` / `default_action`（1 つの辞書か、順に行うアクションのリスト）を、
+    アクション定義のリストにそろえる。
+
+    :param spec: infra.yaml のアクション定義
+    :return: アクション定義のリスト（書いた順）
+    """
+    return list(spec) if isinstance(spec, list) else [spec]
+
+
+def _rule_actions(
+    spec: dict[str, Any] | list[dict[str, Any]], tg_arns: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """
+    `infra.yaml` のアクション定義を、ELBv2 API / CloudFormation の `Actions` にする。
+    複数のアクションには、書いた順に `Order` を付ける（認証してから転送する、など）。
+
+    :param spec: infra.yaml のアクション定義（1 つの辞書か、リスト）
+    :param tg_arns: TG の論理 key -> TG ARN（または CloudFormation の `{"Ref": ...}`）のマップ
+    :return: ELBv2 Action 辞書のリスト
+    """
+    actions = [_rule_action(one, tg_arns) for one in action_specs(spec)]
+    if len(actions) > 1:
+        for order, action in enumerate(actions, start=1):
+            action["Order"] = order
+    return actions
 
 
 def _build_environment(session: Any, infra: dict[str, Any]) -> TestEnv:
@@ -380,7 +512,7 @@ def _build_environment(session: Any, infra: dict[str, Any]) -> TestEnv:
             ValidationMethod="DNS",
         )["CertificateArn"]
 
-    # 3. EC2 インスタンス（すべて先頭の SG を付ける）
+    # 3. EC2 インスタンス（security_groups を書かなければ、先頭の SG を付ける）
     default_sg = env.sg_ids[infra["security_groups"][0]["key"]]
     for inst in infra["ec2_instances"]:
         resp = ec2.run_instances(
@@ -390,7 +522,7 @@ def _build_environment(session: Any, infra: dict[str, Any]) -> TestEnv:
             InstanceType=inst["instance_type"],
             SubnetId=env.subnet_ids[inst["subnet"]],
             PrivateIpAddress=inst["private_ip"],
-            SecurityGroupIds=[default_sg],
+            SecurityGroupIds=[env.sg_ids[k] for k in instance_sg_keys(infra, inst)],
             TagSpecifications=[
                 {"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": inst["name"]}]}
             ],
@@ -473,7 +605,7 @@ def _build_environment(session: Any, infra: dict[str, Any]) -> TestEnv:
                 "LoadBalancerArn": lb_obj["LoadBalancerArn"],
                 "Protocol": listener["protocol"],
                 "Port": listener["port"],
-                "DefaultActions": [_rule_action(listener["default_action"], env.tg_arns)],
+                "DefaultActions": _rule_actions(listener["default_action"], env.tg_arns),
             }
             if listener.get("ssl_policy"):
                 l_kwargs["SslPolicy"] = listener["ssl_policy"]
@@ -487,7 +619,7 @@ def _build_environment(session: Any, infra: dict[str, Any]) -> TestEnv:
                     ListenerArn=listener_arn,
                     Priority=rule["priority"],
                     Conditions=_rule_conditions(rule["conditions"]),
-                    Actions=[_rule_action(rule["action"], env.tg_arns)],
+                    Actions=_rule_actions(rule["action"], env.tg_arns),
                 )
 
     # 7. ELB のノードの ENI（実際の AWS では ELB が自動で作るが、moto は作らないため再現する）
@@ -639,7 +771,7 @@ def _moto_ipv6_filters() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _moto_target_health() -> Iterator[None]:
+def _moto_target_health(infra: dict[str, Any]) -> Iterator[None]:
     """
     moto の describe_target_health を、実際の AWS が返す状態に合わせる。
 
@@ -648,12 +780,17 @@ def _moto_target_health() -> Iterator[None]:
     - どの ELB にも使われていない TG のターゲット: `unused`（`Target.NotInUse`）
     - ヘルスチェックが無効な TG（Lambda の TG の既定）のターゲット: `unavailable`
       （`Target.HealthCheckDisabled`）
+    - 応える相手のいない IP のターゲット（`unanswered_ipv6_targets`）: `unhealthy`
+      （`Target.Timeout`）
+
+    :param infra: infra.yaml のデータ辞書
     """
     from unittest import mock
 
     from moto.elbv2.models import FakeHealthStatus, FakeTargetGroup
 
     original = FakeTargetGroup.health_for
+    unanswered = unanswered_ipv6_targets(infra)
 
     def health_for(self: Any, target: dict[str, Any], ec2_backend: Any) -> Any:
         status = original(self, target, ec2_backend)
@@ -671,6 +808,8 @@ def _moto_target_health() -> Iterator[None]:
                 "Target.HealthCheckDisabled",
                 "Health checks are not enabled for this target",
             )
+        elif status.instance_id in unanswered:
+            state, reason, description = ("unhealthy", "Target.Timeout", "Request timed out")
         else:
             return status
         return FakeHealthStatus(
@@ -704,7 +843,7 @@ def moto_environment(infra: dict[str, Any] | None = None) -> Iterator[TestEnv]:
     ):
         os.environ[name] = "testing"
     os.environ["AWS_DEFAULT_REGION"] = infra["region"]
-    with mock_aws(), _moto_ipv6_filters(), _moto_target_health():
+    with mock_aws(), _moto_ipv6_filters(), _moto_target_health(infra):
         session = boto3.Session(region_name=infra["region"])
         yield _build_environment(session, infra)
 

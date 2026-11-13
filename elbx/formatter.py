@@ -126,8 +126,9 @@ class _AnsiColor:
 # ヘルス状態ごとの記号（ここにない状態は ○）
 _HEALTH_MARKS = {"healthy": "●", "unhealthy": "✖", "draining": "◐", "initial": "◐"}
 
-# 制御文字（C0・DEL・C1）
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# 制御文字（C0・DEL・C1）と、表示の向きを変える文字（Bidi の埋め込み・上書き・分離）。
+# 後者は、名前やタグに入っていると、文字の並びを見た目だけ入れ替えて別の値に見せられる
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 
 def _escape_controls(text: str) -> str:
@@ -140,7 +141,13 @@ def _escape_controls(text: str) -> str:
     :param text: 1 行ぶんの文字列
     :return: 制御文字を置き換えた文字列
     """
-    return _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    return _CONTROL_CHARS.sub(_escaped_char, text)
+
+
+def _escaped_char(match: re.Match[str]) -> str:
+    """制御文字 1 つを、`\\x1b`（1 バイトに収まるもの）か `\\u202e` の形にする。"""
+    code = ord(match.group())
+    return f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
 
 
 @functools.cache
@@ -288,28 +295,26 @@ def _append_rule_map_lines(
     else:
         # "Host in [a, b]" -> "Host a, b" のように、条件の種類と値だけにする
         conds = " AND ".join(
-            cond.replace(" in [", " ").removesuffix("]") for cond in rule.conditions
+            cond.replace(" in [", " ", 1).removesuffix("]") for cond in rule.conditions
         )
         label = f"{c.wrap(f'[{rule.priority}]', c.YELLOW)} {conds}"
     lines.append(f"{branch}{label}")
-    if rule.target_group_refs:
-        for ref, ref_last in _with_last(rule.target_group_refs):
-            weight = (
-                f" (weight={ref.weight})"
-                if ref.weight is not None and len(rule.target_group_refs) > 1
-                else ""
+    # 転送以外のアクション（転送の前の認証、リダイレクト、固定レスポンス）を先に、転送先を
+    # あとに出す。認証つきの転送を、認証のない転送に見せないため
+    refs = rule.target_group_refs
+    other_actions = rule.non_forward_actions
+    for index, action in enumerate(other_actions):
+        b, _ = _tree_prefixes(child, not refs and index == len(other_actions) - 1)
+        lines.append(f"{b}{c.wrap(action, c.CYAN)}")
+    for ref, ref_last in _with_last(refs):
+        weight = f" (weight={ref.weight})" if ref.weight is not None and len(refs) > 1 else ""
+        if ref.target_group is not None:
+            _append_tg_map_lines(
+                lines, ref.target_group, weight, child, ref_last, c, max_targets, expanded
             )
-            if ref.target_group is not None:
-                _append_tg_map_lines(
-                    lines, ref.target_group, weight, child, ref_last, c, max_targets, expanded
-                )
-            else:
-                b, _ = _tree_prefixes(child, ref_last)
-                lines.append(f"{b}{ref.target_group_name}{weight}")
-    else:
-        for action, a_last in _with_last(rule.actions_summary):
-            b, _ = _tree_prefixes(child, a_last)
-            lines.append(f"{b}{c.wrap(action, c.CYAN)}")
+        else:
+            b, _ = _tree_prefixes(child, ref_last)
+            lines.append(f"{b}{ref.target_group_name}{weight}")
 
 
 def _health_summary_badge(tg: TargetGroupView, c: _AnsiColor) -> str:
@@ -685,31 +690,32 @@ def _append_listener_lines(
         prio_colored = c.wrap(prio_label, c.YELLOW if not rule.is_default else c.DIM)
         lines.append(f"{r_branch}Rule {prio_colored} IF {rule.condition_text}")
 
-        if not rule.target_group_refs:
-            for act_text, a_last in _with_last(rule.actions_summary):
-                a_branch, _ = _tree_prefixes(r_child, a_last)
-                lines.append(f"{a_branch}{c.wrap(act_text, c.CYAN)}")
-        else:
-            for ref, ref_last in _with_last(rule.target_group_refs):
-                ref_branch, ref_child = _tree_prefixes(r_child, ref_last)
-                weight_str = (
-                    f" (weight={ref.weight})"
-                    if ref.weight is not None and len(rule.target_group_refs) > 1
-                    else ""
+        # 転送以外のアクション（転送の前の認証、リダイレクト、固定レスポンス）を先に、転送先を
+        # あとに出す。認証つきの転送を、認証のない転送に見せないため
+        refs = rule.target_group_refs
+        other_actions = rule.non_forward_actions
+        for index, act_text in enumerate(other_actions):
+            is_last = not refs and index == len(other_actions) - 1
+            a_branch, _ = _tree_prefixes(r_child, is_last)
+            lines.append(f"{a_branch}{c.wrap(act_text, c.CYAN)}")
+        for ref, ref_last in _with_last(refs):
+            ref_branch, ref_child = _tree_prefixes(r_child, ref_last)
+            weight_str = (
+                f" (weight={ref.weight})" if ref.weight is not None and len(refs) > 1 else ""
+            )
+            if ref.target_group:
+                _append_target_group_lines(
+                    lines=lines,
+                    tg=ref.target_group,
+                    branch_prefix=ref_branch,
+                    child_prefix=ref_child,
+                    c=c,
+                    expanded=expanded,
+                    extra_label=weight_str,
+                    show_network=show_network,
                 )
-                if ref.target_group:
-                    _append_target_group_lines(
-                        lines=lines,
-                        tg=ref.target_group,
-                        branch_prefix=ref_branch,
-                        child_prefix=ref_child,
-                        c=c,
-                        expanded=expanded,
-                        extra_label=weight_str,
-                        show_network=show_network,
-                    )
-                else:
-                    lines.append(f"{ref_branch}TargetGroup: {ref.target_group_name}{weight_str}")
+            else:
+                lines.append(f"{ref_branch}TargetGroup: {ref.target_group_name}{weight_str}")
 
 
 def _append_target_group_lines(
@@ -1337,14 +1343,19 @@ def _append_route_hop_lines(
 
 def _display_width(text: str) -> int:
     """
-    端末に表示したときの幅（全角文字は 2、結合文字は 0）を返す。
+    端末に表示したときの幅（全角文字は 2、結合文字と幅のない文字は 0）を返す。
     `len()` で数えると、日本語の Name タグや「(ELB未アタッチ)」の行だけ表の列がずれるため。
 
     :param text: 表示する文字列
     :return: 表示幅（カラム数）
     """
+    # Mn / Me は結合文字（異体字セレクタを含む）、Cf はゼロ幅スペースなどの幅のない文字
     return sum(
-        0 if unicodedata.combining(ch) else 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+        0
+        if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf")
+        else 2
+        if unicodedata.east_asian_width(ch) in "WF"
+        else 1
         for ch in text
     )
 

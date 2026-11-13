@@ -15,12 +15,12 @@
 │       └── Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
 └── HTTPS:443  cert=*.elbx-test.internal
     ├── [10] Host api.elbx-test.internal AND Path /v1/*
-    │   ├── prod-web-tg (weight=90) [1/2 healthy, 1 unhealthy]
-    │   │   ├── ✖ web-prod-02 (unhealthy)
-    │   │   └── … ほか 1 台 (healthy)
-    │   └── prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
-    │       └── ◐ canary-prod-01 (draining)
-    ├── [20] Header(X-Env) ip-direct AND SourceIP 203.0.113.0/24 AND Query mode=fast AND Method POST, GET
+    │   ├── prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
+    │   │   └── ◐ canary-prod-01 (draining)
+    │   └── prod-web-tg (weight=90) [1/2 healthy, 1 unhealthy]
+    │       ├── ✖ web-prod-02 (unhealthy)
+    │       └── … ほか 1 台 (healthy)
+    ├── [20] Method POST, GET AND Query mode=fast AND SourceIP 203.0.113.0/24 AND Header(X-Env) ip-direct
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*

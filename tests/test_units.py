@@ -20,6 +20,7 @@ from botocore.exceptions import ClientError
 from elbx import (
     ECSTaskInfo,
     ELBClient,
+    ELBError,
     ENIInfo,
     LambdaFunctionInfo,
     ListenerView,
@@ -49,16 +50,30 @@ from elbx.fetchers import (
     _decode_route53_name,
     _parse_elb_eni_description,
 )
-from elbx.formatter import _AnsiColor, _display_width, _health_summary_badge, _render_table
+from elbx.formatter import (
+    _AnsiColor,
+    _display_width,
+    _escape_controls,
+    _health_summary_badge,
+    _render_table,
+)
 from elbx.hydrator import (
     _ip_targets_outside_load_balancers,
     _LBBatch,
     _link_downstream_lbs,
     _RawTargetGroups,
+    _summarize_action,
     _target_groups_outside_load_balancers,
     _TargetIds,
 )
-from elbx.simulator import SimulatedRequest, simulate_hop
+from elbx.models import _dumps_json
+from elbx.simulator import (
+    SimulatedRequest,
+    _host_without_port,
+    evaluate_condition,
+    mask_userinfo,
+    simulate_hop,
+)
 
 from .harness import TestEnv
 
@@ -2594,3 +2609,230 @@ def test_serial_and_parallel_runs_print_the_same(
         assert cli.main(["targets", "--no-color"], client=client) == 0
         outputs.append(capsys.readouterr().out)
     assert outputs[0] == outputs[1]
+
+
+# =============================================================================
+# 外部レビュー（2026-11-14）で見つかった誤り
+# =============================================================================
+
+
+def _rule_lb(elb_client: ELBClient, actions: list[dict[str, Any]]) -> LoadBalancerView:
+    """`actions` を持つルール（優先度 5）が 1 つあるリスナーの ELB を作る。転送先は TG `web`。"""
+    tg = TargetGroupView(
+        arn="tg-web",
+        name="web",
+        protocol="HTTP",
+        port=80,
+        target_type="ip",
+        targets=[TargetView("10.0.0.1", 80, "healthy")],
+    )
+    raw_rule = {"RuleArn": "r", "Priority": "5", "Conditions": [], "Actions": actions}
+    rule = elb_client._build_rule_view(raw_rule, {"tg-web": tg})
+    lb = _lb_with_targets("entry", [])
+    lb.target_groups = [tg]
+    lb.listeners = [ListenerView(arn="l", port=443, protocol="HTTPS", rules=[rule])]
+    return lb
+
+
+_OIDC = {
+    "Type": "authenticate-oidc",
+    "Order": 1,
+    "AuthenticateOidcConfig": {
+        "Issuer": "https://idp.example.com",
+        "ClientId": "client",
+        "OnUnauthenticatedRequest": "authenticate",
+    },
+}
+_FORWARD = {"Type": "forward", "Order": 2, "TargetGroupArn": "tg-web"}
+
+
+def test_tree_shows_the_authentication_before_a_forward(elb_client: ELBClient) -> None:
+    """認証してから転送するルールは、認証のアクションを転送先の前に出す（認証なしに見せない）。"""
+    lb = _rule_lb(elb_client, [_FORWARD, _OIDC])  # Order の順に並べ直す
+    rule = lb.listeners[0].rules[0]
+    oidc = "AuthenticateOidc (issuer=https://idp.example.com, on_unauthenticated=authenticate)"
+    assert rule.actions_summary == [oidc, "Forward -> web"]
+    assert rule.non_forward_actions == [oidc]
+
+    relationship_map = format_lb_map(lb, use_color=False).splitlines()
+    at = next(i for i, line in enumerate(relationship_map) if "[5]" in line)
+    assert relationship_map[at + 1].endswith(f"├── {oidc}")
+    assert relationship_map[at + 2].endswith("└── web [1/1 healthy]")
+
+    full = format_lb_tree(lb, use_color=False).splitlines()
+    at = next(i for i, line in enumerate(full) if "Rule [priority:5]" in line)
+    assert full[at + 1].endswith(f"├── {oidc}")
+    assert "TG: web" in full[at + 2]
+
+
+def test_tree_ends_the_branch_at_the_last_action_without_a_forward(elb_client: ELBClient) -> None:
+    """転送のないルール（認証のあとに固定レスポンス）は、最後のアクションで枝を閉じる。"""
+    cognito = {
+        "Type": "authenticate-cognito",
+        "Order": 1,
+        "AuthenticateCognitoConfig": {
+            "UserPoolArn": "arn:aws:cognito-idp:ap-northeast-1:123456789012:userpool/pool-1",
+            "UserPoolClientId": "client",
+            "OnUnauthenticatedRequest": "deny",
+        },
+    }
+    fixed = {"Type": "fixed-response", "Order": 2, "FixedResponseConfig": {"StatusCode": "200"}}
+    lb = _rule_lb(elb_client, [cognito, fixed])
+    lines = format_lb_map(lb, use_color=False).splitlines()
+    at = next(i for i, line in enumerate(lines) if "[5]" in line)
+    assert lines[at + 1].endswith(
+        "├── AuthenticateCognito (user_pool=pool-1, on_unauthenticated=deny)"
+    )
+    assert lines[at + 2].endswith("└── FixedResponse (200, text/plain)")
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"Protocol": "HTTPS", "Host": "new.example.com", "Port": "443", "Path": "/x"}, "/x"),
+        ({"Path": "/x", "Query": "#{query}"}, "/x"),
+        ({"Path": "/x", "Query": "utm=1"}, "/x?utm=1"),
+        ({"Path": "/x", "Query": ""}, "/x?"),
+    ],
+    ids=["no_query_key", "keeps_the_query", "sets_a_query", "drops_the_query"],
+)
+def test_redirect_summary_shows_a_changed_query(config: dict[str, str], expected: str) -> None:
+    """リダイレクトがクエリを変えるときだけ、要約にクエリを出す（既定の `#{query}` は出さない）。"""
+    summary, refs = _summarize_action({"Type": "redirect", "RedirectConfig": config}, {})
+    assert summary.endswith(expected)
+    assert refs == []
+
+
+def test_unhealthy_json_keeps_the_summary_of_the_whole_target_group(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`targets --unhealthy --json` は targets だけを絞り、summary は TG 全体の件数のままにする。"""
+    tg = TargetGroupView(
+        arn="tg-1",
+        name="web",
+        protocol="HTTP",
+        port=80,
+        target_type="ip",
+        load_balancer_arns=["lb-1"],
+        targets=[
+            TargetView("10.0.0.1", 80, "healthy"),
+            TargetView("10.0.0.2", 80, "healthy"),
+            TargetView("10.0.0.3", 80, "unhealthy"),
+        ],
+    )
+
+    class _Client:
+        def list_target_groups(self, **_: Any) -> list[TargetGroupView]:
+            return [tg]
+
+    argv = ["targets", "--unhealthy", "--json"]
+    assert cli.main(argv, client=_Client()) == 0  # type: ignore[arg-type]
+    (shown,) = json.loads(capsys.readouterr().out)
+    assert [t["target_id"] for t in shown["targets"]] == ["10.0.0.3"]
+    assert shown["summary"]["total"] == 3
+    assert shown["summary"]["healthy"] == 2
+    assert shown["summary"]["unhealthy"] == 1
+    assert shown["summary"]["by_state"] == {"healthy": 2, "unhealthy": 1}
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("2001:db8::1", "2001:db8::1"),
+        ("[2001:DB8::1]:8443", "2001:db8::1"),
+        ("[2001:db8::1]", "2001:db8::1"),
+        ("API.example.com:8443", "api.example.com"),
+        ("10.0.0.1:80", "10.0.0.1"),
+        ("", ""),
+    ],
+)
+def test_host_without_port_keeps_an_ipv6_address_whole(header: str, expected: str) -> None:
+    """角括弧のない IPv6 アドレスを「ホスト 2001、ポート …」と読まない。"""
+    assert _host_without_port(header) == expected
+
+
+def test_route_reads_an_ipv6_host_from_the_url() -> None:
+    """URL のホストが IPv6 アドレスでも、host-header の条件の理由にアドレス全体が出る。"""
+    req = SimulatedRequest.from_url("http://[2001:db8::1]:8080/")
+    cond = {"Field": "host-header", "HostHeaderConfig": {"Values": ["*.example.com"]}}
+    assert evaluate_condition(cond, req) == (
+        False,
+        "Host '2001:db8::1' は [*.example.com] のいずれにも一致しません",
+    )
+
+
+def test_credentials_in_a_url_are_masked(elb_client: ELBClient) -> None:
+    """URL に書いた `user:secret@` は、結果にもエラーにも残さない。"""
+    assert mask_userinfo("https://user:secret@example.com/a@b") == "https://***@example.com/a@b"
+    assert mask_userinfo("user:secret@example.com/x") == "***@example.com/x"
+    assert mask_userinfo("https://example.com/a@b?c=d@e") == "https://example.com/a@b?c=d@e"
+    assert mask_userinfo("example.com") == "example.com"
+
+    req = SimulatedRequest.from_url("https://user:secret@api.elbx-test.internal/v1/users")
+    assert req.url == "https://***@api.elbx-test.internal/v1/users"
+    assert req.host == "api.elbx-test.internal"
+
+    result = elb_client.simulate_request("https://user:secret@api.elbx-test.internal/v1/users")
+    assert "secret" not in format_route_simulation(result, use_color=False)
+    assert "secret" not in json.dumps(result.to_dict())
+
+    with pytest.raises(ELBError) as exc_info:
+        elb_client.simulate_request("ftp://user:secret@example.com/")
+    assert "secret" not in str(exc_info.value)
+    assert "***@example.com" in str(exc_info.value)
+
+
+def test_direction_changing_characters_are_escaped() -> None:
+    """表示の向きを変える文字（Bidi）は、ほかの制御文字と同じく文字として見せる。"""
+    assert _escape_controls("a‮b⁦c\x1bd") == "a\\u202eb\\u2066c\\x1bd"
+    dumped = _dumps_json({"name": "a‮b"})
+    assert "‮" not in dumped
+    assert json.loads(dumped) == {"name": "a‮b"}
+
+
+def test_zero_width_characters_do_not_shift_table_columns() -> None:
+    """ゼロ幅スペースや異体字セレクタは、幅 0 として数える。"""
+    assert _display_width("a​b") == 2
+    assert _display_width("a️b") == 2
+    assert _display_width("日本") == 4
+
+
+def test_regex_reason_names_the_header() -> None:
+    """ヘッダーの正規表現の条件は、どのヘッダーの条件かも理由に出す。"""
+    cond = {
+        "Field": "http-header",
+        "HttpHeaderConfig": {"HttpHeaderName": "X-Env", "RegexValues": ["^prod$"]},
+    }
+    _, reason = evaluate_condition(cond, SimulatedRequest.from_url("http://a.example.com/"))
+    assert reason.startswith("http-header (X-Env) の正規表現の条件 [^prod$]")
+
+
+def test_find_matches_the_arn_of_an_ecs_cluster(elb_client: ELBClient) -> None:
+    """ECS のクラスターの ARN を貼ると、そのクラスターのターゲットが見つかる。"""
+    cluster = next(
+        t.ecs.cluster_arn for r in elb_client.find_target("api-fargate") if (t := r.target).ecs
+    )
+    assert cluster.startswith("arn:")
+    found = elb_client.find_target(cluster)
+    assert found
+    assert {r.target.target_kind for r in found} == {"ecs"}
+    assert elb_client.find_target(cluster + "-other") == []
+
+
+def test_double_dash_ends_the_options(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--` より後ろの `--help` は、オプションではなく名前として扱う。"""
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--", "--help"])
+    assert exc_info.value.code == 2
+    assert "'--help' はコマンドではありません" in capsys.readouterr().err
+
+
+def test_mistyped_command_with_control_characters_is_escaped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """打ち間違えたコマンド名に ESC が入っていても、端末に解釈させない。"""
+    with pytest.raises(SystemExit):
+        cli.main(["a\x1b[31mb"])
+    err = capsys.readouterr().err
+    assert "\x1b" not in err
+    assert "'a\\x1b[31mb' はコマンドではありません" in err

@@ -30,9 +30,24 @@
       ],
       "matched_rule_priority": "10",
       "actions_summary": [
-        "Forward -> prod-web-tg (weight=90), prod-canary-tg (weight=10)"
+        "Forward -> prod-canary-tg (weight=10), prod-web-tg (weight=90)"
       ],
       "target_groups": [
+        {
+          "name": "prod-canary-tg",
+          "arn": "<tg-arn:canary_tg>",
+          "weight": 10,
+          "health_summary": "1/1 healthy",
+          "targets": [
+            {
+              "display_name": "canary-prod-01 (<i:canary_01>)",
+              "target_kind": "ec2",
+              "port": 8080,
+              "health_state": "healthy",
+              "health_reason": ""
+            }
+          ]
+        },
         {
           "name": "prod-web-tg",
           "arn": "<tg-arn:web_tg>",
@@ -48,21 +63,6 @@
             },
             {
               "display_name": "web-prod-02 (<i:web_02>)",
-              "target_kind": "ec2",
-              "port": 8080,
-              "health_state": "healthy",
-              "health_reason": ""
-            }
-          ]
-        },
-        {
-          "name": "prod-canary-tg",
-          "arn": "<tg-arn:canary_tg>",
-          "weight": 10,
-          "health_summary": "1/1 healthy",
-          "targets": [
-            {
-              "display_name": "canary-prod-01 (<i:canary_01>)",
               "target_kind": "ec2",
               "port": 8080,
               "health_state": "healthy",

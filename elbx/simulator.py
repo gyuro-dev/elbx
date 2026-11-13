@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from ._ids import canonical_ip
 from .messages import t
 from .models import ListenerView, LoadBalancerView, RouteHop, RuleEvaluation, RuleView
 
@@ -86,7 +87,7 @@ class SimulatedRequest:
             `source_ip` is not an IP address
             / スキームが http / https でない、ホスト名がない、`source_ip` が IP アドレスでない
         """
-        raw = url if _URL_SCHEME.match(url) else f"http://{url}"
+        raw = mask_userinfo(url if _URL_SCHEME.match(url) else f"http://{url}")
         parts = urlsplit(raw)
         scheme = parts.scheme.lower()
         if scheme not in ("http", "https"):
@@ -233,6 +234,22 @@ def wildcard_match(pattern: str, value: str, ignore_case: bool, escape: bool = F
     return all(token == _ANY_RUN for token in tokens[p:])
 
 
+# URL の認証情報（`https://user:secret@host/` の `user:secret`）。パスより前の `@` まで
+_USERINFO = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#@]*@")
+
+
+def mask_userinfo(url: str) -> str:
+    """
+    URL に書かれた認証情報（`user:secret@`）を `***@` に置き換える。
+    `route` の出力・JSON・エラーにそのまま残ると、CI のログなどに秘密の値が出るため。
+    ALB のルールの判定には使わない値なので、伏せても結果は変わらない。
+
+    :param url: URL（スキームがなくてもよい）
+    :return: 認証情報を伏せた URL
+    """
+    return _USERINFO.sub(lambda m: f"{m.group('scheme') or ''}***@", url, count=1)
+
+
 def _host_without_port(host_header: str) -> str:
     """
     Host ヘッダーの値からポートを除いた小文字のホスト名を返す（`[2001:db8::1]:443` のような
@@ -241,10 +258,15 @@ def _host_without_port(host_header: str) -> str:
     :param host_header: Host ヘッダーの値
     :return: ポートを除いたホスト名（小文字）
     """
-    if not host_header:
+    host = host_header.strip().lower()
+    if not host:
         return ""
+    # 角括弧のない IPv6 アドレス（URL の `[2001:db8::1]` から取り出したホスト名など）は、コロンで
+    # 区切らずにそのまま返す。`2001:db8::1` を「ホスト 2001、ポート db8::1」と読まないため
+    if canonical_ip(host) is not None:
+        return host
     with contextlib.suppress(ValueError):
-        return urlsplit(f"//{host_header.strip()}").hostname or ""
+        return urlsplit(f"//{host}").hostname or ""
     return ""
 
 
@@ -311,7 +333,9 @@ def evaluate_condition(cond: dict[str, Any], req: SimulatedRequest) -> tuple[boo
     # ALB の正規表現は Python の re と同じ規則とは限らないので、評価せず、そのことを理由に出す
     regexes = _regex_values(cond)
     if regexes:
-        return False, t("sim.regex_condition", field=field_name, values=", ".join(regexes))
+        header = cond.get("HttpHeaderConfig", {}).get("HttpHeaderName", "")
+        field = f"{field_name} ({header})" if header else field_name
+        return False, t("sim.regex_condition", field=field, values=", ".join(regexes))
 
     if field_name == "host-header":
         vals = _values(cond, "HostHeaderConfig")

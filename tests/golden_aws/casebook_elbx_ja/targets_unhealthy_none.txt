@@ -1,0 +1,7 @@
+# case: targets_unhealthy_none
+# description: 調べるべきターゲットがなければ、--unhealthy はメッセージだけを出す（ヘルスチェックが無効な Lambda の unavailable は数えない）
+# command: elbx targets prod-web-alb --unhealthy --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+調べるべきターゲットはありません。
