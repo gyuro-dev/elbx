@@ -151,8 +151,11 @@ cases:
     description: Lambda TG の JSON 出力（属性・ヘルス集計を含む）
     command: targets --tg prod-lambda-tg --json
   - name: targets_unhealthy_normal
-    description: 平常時の --unhealthy はメッセージだけを出す。ヘルスチェックが無効な Lambda の unavailable と、ELB に使われていない TG の unused は調べる対象にしない
+    description: 平常時の --unhealthy。出るのは、応える相手のいない IPv6 のターゲットだけ。ヘルスチェックが無効な Lambda の unavailable と、ELB に使われていない TG の unused は調べる対象にしない
     command: targets --unhealthy --no-color
+  - name: targets_unhealthy_none
+    description: 調べるべきターゲットがなければ、--unhealthy はメッセージだけを出す（ヘルスチェックが無効な Lambda の unavailable は数えない）
+    command: targets prod-web-alb --unhealthy --no-color
   - name: targets_unhealthy_incident
     description: 障害時の --unhealthy。調べるべきターゲットだけが DETAIL と HEALTH CHECK の列付きで出る
     command: targets --unhealthy --no-color

@@ -1,0 +1,47 @@
+# case: tree_dualstack_alb
+# description: デュアルスタックの ALB。IPv6 の ip ターゲットが ENI から EC2 に、ENI のない IP はサブネットの IPv6 CIDR から AZ に解決され（IPv6 専用サブネットも含む）、SG の IPv6 の送信元も出る
+# command: elbx tree v6-dualstack-alb --full --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+[APPLICATION] v6-dualstack-alb (internal, ip=dualstack, state=active, vpc=<vpc>)
+│  DNS: <dns:v6_alb>
+│  Route53: v6.elbx-test.internal (AAAA Alias, zone=elbx-test.internal [Private])
+│  Attributes: idle_timeout=60s, cross_zone=on, deletion_protection=off, access_logs=off, drop_invalid_headers=off
+├── Network & Security
+│   ├── Subnets (2 AZs)
+│   │   ├── ap-northeast-1a: <subnet:public_1a> (public-subnet-1a) [10.0.1.0/24, <ipv6:public_1a>::/64]
+│   │   └── ap-northeast-1c: <subnet:public_1c> (public-subnet-1c) [10.0.2.0/24, <ipv6:public_1c>::/64]
+│   └── Security Groups (1)
+│       └── <sg:v6_alb_sg> (v6-alb-sg)
+│           ├── in  allow TCP:80 from 10.0.0.0/16 # HTTP from VPC
+│           ├── in  allow TCP:80 from <vpc-ipv6-cidr> # HTTP from VPC (IPv6)
+│           ├── in  allow TCP:443 from 10.0.0.0/16 # HTTPS from VPC
+│           ├── in  allow TCP:443 from <vpc-ipv6-cidr> # HTTPS from VPC (IPv6)
+│           ├── out allow ALL:ALL to 0.0.0.0/0
+│           └── out allow ALL:ALL to ::/0
+└── Listeners (2)
+    ├── Listener HTTP:80
+    │   ├── Rule [priority:10] IF SourceIP in [<vpc-ipv6-cidr>]
+    │   │   └── TG: prod-v6-ip-tg (HTTP:8080, type=ip, ip=ipv6, HC=HTTP:traffic-port/healthz) [1/3 healthy, 2 unhealthy]
+    │   │       ├── attrs: dereg_delay=300s
+    │   │       ├── [✖ unhealthy] <ipv6:public_1c>::50 [port=8080, az=ap-northeast-1c] (Target.Timeout: Request timed out)
+    │   │       │   └── net: subnet=public-subnet-1c (<subnet:public_1c>, 10.0.2.0/24, <ipv6:public_1c>::/64)
+    │   │       ├── [✖ unhealthy] <ipv6:v6only_1a>::50 [port=8080, az=ap-northeast-1a] (Target.Timeout: Request timed out)
+    │   │       │   └── net: subnet=v6only-subnet-1a (<subnet:v6only_1a>, <ipv6:v6only_1a>::/64)
+    │   │       └── [● healthy] [IP->EC2] v6-web-01 [id=<i:v6_web_01>, port=8080, ip=<ipv6:public_1a>::31, az=ap-northeast-1a, type=t4g.nano, ec2=running]
+    │   │           └── net: subnet=public-subnet-1a (<subnet:public_1a>, 10.0.1.0/24, <ipv6:public_1a>::/64) | sg=prod-alb-sg (<sg:alb_sg>), v6-web-sg (<sg:v6_web_sg>)
+    │   └── Rule [default] IF DEFAULT (すべての未一致リクエスト)
+    │       └── FixedResponse (403, text/plain)
+    └── Listener HTTPS:443 [SSLPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06]
+        ├── ACM Cert: *.elbx-test.internal (<cert:wildcard_cert>, status=ISSUED, expires=<date>)
+        └── Rule [default] IF DEFAULT (すべての未一致リクエスト)
+            ├── AuthenticateOidc (issuer=https://idp.elbx-test.internal, on_unauthenticated=authenticate)
+            └── TG: prod-v6-ip-tg (HTTP:8080, type=ip, ip=ipv6, HC=HTTP:traffic-port/healthz) [1/3 healthy, 2 unhealthy]
+                ├── attrs: dereg_delay=300s
+                ├── [✖ unhealthy] <ipv6:public_1c>::50 [port=8080, az=ap-northeast-1c] (Target.Timeout: Request timed out)
+                │   └── net: subnet=public-subnet-1c (<subnet:public_1c>, 10.0.2.0/24, <ipv6:public_1c>::/64)
+                ├── [✖ unhealthy] <ipv6:v6only_1a>::50 [port=8080, az=ap-northeast-1a] (Target.Timeout: Request timed out)
+                │   └── net: subnet=v6only-subnet-1a (<subnet:v6only_1a>, <ipv6:v6only_1a>::/64)
+                └── [● healthy] [IP->EC2] v6-web-01 [id=<i:v6_web_01>, port=8080, ip=<ipv6:public_1a>::31, az=ap-northeast-1a, type=t4g.nano, ec2=running]
+                    └── net: subnet=public-subnet-1a (<subnet:public_1a>, 10.0.1.0/24, <ipv6:public_1a>::/64) | sg=prod-alb-sg (<sg:alb_sg>), v6-web-sg (<sg:v6_web_sg>)

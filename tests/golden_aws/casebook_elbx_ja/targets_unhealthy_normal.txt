@@ -4,4 +4,7 @@
 # state: default
 # exit_code: 0
 ----- stdout -----
-調べるべきターゲットはありません。
+TARGET GROUP   KIND  TARGET ID               RESOURCE / NAME  PRIVATE IP              PORT  AZ               SUBNET                                       SECURITY GROUPS  ELB HEALTH  STATE  REASON          DETAIL             HEALTH CHECK
+-------------  ----  ----------------------  ---------------  ----------------------  ----  ---------------  -------------------------------------------  ---------------  ----------  -----  --------------  -----------------  ------------------------------------------------------------------------------
+prod-v6-ip-tg  ip    <ipv6:public_1c>::50  -                <ipv6:public_1c>::50  8080  ap-northeast-1c  public-subnet-1c (<subnet:public_1c>)  -                unhealthy   -      Target.Timeout  Request timed out  HTTP:traffic-port/healthz 200 every 10s (timeout 5s, unhealthy x2, healthy x2)
+prod-v6-ip-tg  ip    <ipv6:v6only_1a>::50  -                <ipv6:v6only_1a>::50  8080  ap-northeast-1a  v6only-subnet-1a (<subnet:v6only_1a>)  -                unhealthy   -      Target.Timeout  Request timed out  HTTP:traffic-port/healthz 200 every 10s (timeout 5s, unhealthy x2, healthy x2)

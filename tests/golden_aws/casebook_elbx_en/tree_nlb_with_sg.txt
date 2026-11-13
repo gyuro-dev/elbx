@@ -9,15 +9,16 @@
 │  Attributes: cross_zone=off, deletion_protection=off, access_logs=off
 ├── Network & Security
 │   ├── Subnets (1 AZs)
-│   │   └── ap-northeast-1a: <subnet:public_1a> (public-subnet-1a) [10.0.1.0/24]
+│   │   └── ap-northeast-1a: <subnet:public_1a> (public-subnet-1a) [10.0.1.0/24, <ipv6:public_1a>::/64]
 │   └── Security Groups (1)
 │       └── <sg:batch_nlb_sg> (batch-nlb-sg)
 │           ├── in  allow TCP:9090 from 10.0.0.0/16 # From ALB in VPC
-│           └── out allow ALL:ALL to 0.0.0.0/0
+│           ├── out allow ALL:ALL to 0.0.0.0/0
+│           └── out allow ALL:ALL to ::/0
 └── Listeners (1)
     └── Listener TCP:9090
         └── Rule [default] IF DEFAULT (every request no other rule matched)
             └── TG: batch-nlb-tg (TCP:9090, type=instance, HC=TCP:traffic-port) [1/1 healthy]
                 ├── attrs: dereg_delay=300s, preserve_client_ip=on
                 └── [● healthy] batch-worker-01 [id=<i:batch_01>, port=9090, ip=10.0.1.71, az=ap-northeast-1a, type=t4g.nano, ec2=running]
-                    └── net: subnet=public-subnet-1a (<subnet:public_1a>, 10.0.1.0/24) | sg=prod-alb-sg (<sg:alb_sg>)
+                    └── net: subnet=public-subnet-1a (<subnet:public_1a>, 10.0.1.0/24, <ipv6:public_1a>::/64) | sg=prod-alb-sg (<sg:alb_sg>)

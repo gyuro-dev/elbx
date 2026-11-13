@@ -499,6 +499,10 @@ def build_template(infra: dict[str, Any], opts: AwsOptions) -> dict[str, Any]:
             targets += [
                 {"Id": ipv6(ip) if ":" in ip else ip, "Port": port} for ip in tg.get("ips", [])
             ]
+            # IP を登録できるのは、その IP を含むサブネットができてから。IPv4 は IP を文字で書くので
+            # サブネットへの参照がなく、放っておくとサブネットより先に作られることがある
+            if tg.get("ips"):
+                depends_on += [logical_id("Subnet", sub["key"]) for sub in infra["subnets"]]
         for key in tg.get("lambdas", []):
             targets.append({"Id": _get_att(lambda_lids[key], "Arn")})
             depends_on.append(f"{lambda_lids[key]}ElbPermission")

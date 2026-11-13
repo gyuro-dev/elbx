@@ -19,7 +19,13 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from tests.harness import TestEnv, check_exposure_policy, for_real_aws, load_infra
+from tests.harness import (
+    TestEnv,
+    check_exposure_policy,
+    for_real_aws,
+    load_infra,
+    unanswered_ipv6_targets,
+)
 
 from .options import (
     TAG_KEY,
@@ -472,20 +478,14 @@ def _outputs(session: Any, stack_name: str) -> dict[str, str]:
 def never_healthy_targets(infra: dict[str, Any], env: TestEnv) -> set[str]:
     """
     healthy にならないと分かっているターゲットの ID（実際の AWS のアドレス）を返す。
-    どのリソースのものでもない IP（「ENI のない IP」を確かめるための IPv6 のターゲット）は、
-    ヘルスチェックに応える相手がいないので、いつまでも `unhealthy` のままになる。
+    応える相手のいない IPv6 のターゲット（`unanswered_ipv6_targets`）は、いつまでも `unhealthy` の
+    ままになる。
 
     :param infra: infra.yaml のデータ辞書
     :param env: 実際の AWS の環境（IPv6 の読み替えに使う）
     :return: ターゲットの ID の集合
     """
-    owned = {ip for inst in infra["ec2_instances"] for ip in inst.get("ipv6_ips", [])}
-    return {
-        env.real_ipv6(ip)
-        for tg in infra["target_groups"]
-        for ip in tg.get("ips", [])
-        if ":" in ip and ip not in owned
-    }
+    return {env.real_ipv6(ip) for ip in unanswered_ipv6_targets(infra)}
 
 
 def wait_for_health(

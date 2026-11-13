@@ -162,9 +162,14 @@ cases:
     description: the JSON of a Lambda target group (with the attributes and the health count)
     command: targets --tg prod-lambda-tg --json
   - name: targets_unhealthy_normal
-    description: in normal times, --unhealthy prints only a message. A Lambda unavailable because health checks are
-      disabled and the unused targets of a target group no load balancer uses do not need attention
+    description: --unhealthy in normal times. Only the IPv6 targets nothing answers for are listed. A Lambda unavailable
+      because health checks are disabled and the unused targets of a target group no load balancer uses do not need
+      attention
     command: targets --unhealthy --no-color
+  - name: targets_unhealthy_none
+    description: when no target needs attention, --unhealthy prints only a message (a Lambda unavailable because health
+      checks are disabled is not counted)
+    command: targets prod-web-alb --unhealthy --no-color
   - name: targets_unhealthy_incident
     description: --unhealthy during an incident. Only the targets that need attention, with the DETAIL and HEALTH CHECK
       columns

@@ -228,6 +228,18 @@ def test_ipv6_is_built_from_the_cidr_amazon_assigns() -> None:
     assert 'http.server "$port" --bind ::' in user_data
 
 
+def test_target_groups_with_ip_targets_wait_for_the_subnets() -> None:
+    """
+    IP を登録する TG は、サブネットができてから作る。IPv4 の IP は文字で書くのでサブネットへの
+    参照がなく、順序を書かないと「VPC の中だがサブネットの外」で登録に失敗する（実際の AWS で
+    2026-11-14 に起きた）。
+    """
+    template = build_template(load_infra(), _opts())
+    subnets = {"SubnetPublic1a", "SubnetPublic1c", "SubnetV6only1a"}
+    for lid in ("TgIpTg", "TgAlbToNlbTg", "TgV6IpTg"):
+        assert subnets <= set(template["Resources"][lid]["DependsOn"]), lid
+
+
 def test_listener_with_authentication_gets_ordered_actions() -> None:
     """認証してから転送するリスナーは、書いた順に Order を付けた複数のアクションになる。"""
     template = build_template(load_infra(), _opts())

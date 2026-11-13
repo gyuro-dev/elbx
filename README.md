@@ -364,6 +364,8 @@ TARGET GROUP    KIND    TARGET ID            RESOURCE / NAME                    
 --------------  ------  -------------------  ---------------------------------  ...  ----------  -------  -------------------------------  --------------------------------------------  ------------------------------------------------------------------------------
 prod-canary-tg  ec2     i-f35eac4266f7e9663  canary-prod-01                     ...  draining    running  Target.DeregistrationInProgress  Target deregistration is in progress          HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-lambda-tg  lambda  arn:aws:lambda:...   Lambda: prod-auth-fn (python3.12)  ...  initial     Active   Elb.RegistrationInProgress       Target registration is in progress            -
+prod-v6-ip-tg   ip      2001:db8:1:2::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
+prod-v6-ip-tg   ip      2001:db8:1:3::50     -                                  ...  unhealthy   -        Target.Timeout                   Request timed out                             HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 prod-web-tg     ec2     i-f75dd6e70a2a90cf1  web-prod-02                        ...  unhealthy   running  Target.FailedHealthChecks        Health checks failed with these codes: [502]  HTTP:traffic-port/healthz 200 every 30s (timeout 5s, unhealthy x2, healthy x5)
 ```
 
@@ -448,12 +450,12 @@ elbx ls -s batch
 <summary>Example: <code>elbx ls</code></summary>
 
 ```text
-NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)  ROUTE53 / DNS NAME
-----------------  -----------  --------------------  ------  ---------------------  ------------------  -----------------------  -------------------------------------------------------------------------------------------------
-prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
-edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
-batch-nlb         network      internal              active  vpc-c05aed80b218ef684  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
-v6-dualstack-alb  application  internal (dualstack)  active  vpc-c05aed80b218ef684  HTTP:80             3/3 (1 TGs)              v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
+NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
+----------------  -----------  --------------------  ------  ---------------------  ------------------  -------------------------  -------------------------------------------------------------------------------------------------
+prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)                api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)                edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+batch-nlb         network      internal              active  vpc-c05aed80b218ef684  TCP:9090            1/1 (1 TGs)                batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+v6-dualstack-alb  application  internal (dualstack)  active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  1/3 (1 TGs, attention: 2)  v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
 ```
 
 </details>
@@ -994,11 +996,12 @@ flowchart LR
     ALB -->|"/batch/* (ip TG)"| ENI["NLB node IP<br/>10.0.1.90 (ENI)"]
     ENI -->|"found from the ENI description"| NLB2["batch-nlb<br/>TCP:9090 (with SG)"]
     NLB2 --> B["EC2 batch-worker-01"]
-    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80"]
+    R4["v6.elbx-test.internal (AAAA Alias)"] --> ALB6["v6-dualstack-alb<br/>HTTP:80 / HTTPS:443 (OIDC authentication)"]
     ALB6 -->|"IPv6 ip TG"| V6["EC2 v6-web-01 / IPv6 IPs"]
 ```
 
-The IPv6 parts (the dual-stack ALB and so on) are written with the documentation prefix `2001:db8:1::/56`. On real AWS they are built at the same positions in the /56 that Amazon assigns.
+The IPv6 parts (the dual-stack ALB and so on) are written with the documentation prefix `2001:db8:1::/56`. On real AWS they are built at the same positions in the /56 that Amazon assigns.\
+Two of the IPv6 IP targets belong to no resource, so nothing answers their health checks and they stay `unhealthy` (`Target.Timeout`); moto is made to report the same state.
 
 #### Tests on real AWS (this costs money)
 

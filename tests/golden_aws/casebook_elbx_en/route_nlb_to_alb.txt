@@ -15,10 +15,10 @@ Entry: [NETWORK] edge-ingress-nlb (Listener TCP:443)
       ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
           Host 'edge.elbx-test.internal' matches none of [api.elbx-test.internal]
           Path '/auth/login' matches none of [/v1/*]
-      ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND SourceIP in [203.0.113.0/24] AND Query in [mode=fast] AND Method in [POST, GET]
-          Header(X-Env) is not in the request (give it with -H)
-          no source IP given, so taken as not matching (give it with --source-ip)
+      ✗ Rule [priority:20] IF Method in [POST, GET] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24] AND Header(X-Env) in [ip-direct]
           Query '(none)' matches none of [mode=fast]
+          no source IP given, so taken as not matching (give it with --source-ip)
+          Header(X-Env) is not in the request (give it with -H)
       ✗ Rule [priority:25] IF Path in [/ecs/*]
           Path '/auth/login' matches none of [/ecs/*]
       ✓ Rule [priority:28] IF Path in [/auth/*]

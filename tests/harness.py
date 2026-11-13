@@ -94,6 +94,24 @@ def ipv6_offset(infra: dict[str, Any], value: str) -> int:
     return int(address) - int(vpc.network_address)
 
 
+def unanswered_ipv6_targets(infra: dict[str, Any]) -> set[str]:
+    """
+    ヘルスチェックに応える相手がいない IPv6 のターゲット（infra.yaml のアドレス）を返す。
+    どのリソースのものでもない IP（「ENI のない IP」を確かめるためのターゲット）で、実際の AWS では
+    いつまでも `unhealthy`（`Target.Timeout`）のままになる。moto でも同じ状態にして比べる。
+
+    :param infra: infra.yaml のデータ辞書
+    :return: ターゲットの IP の集合
+    """
+    owned = {ip for inst in infra["ec2_instances"] for ip in inst.get("ipv6_ips", [])}
+    return {
+        ip
+        for tg in infra["target_groups"]
+        for ip in tg.get("ips", [])
+        if ":" in ip and ip not in owned
+    }
+
+
 def instance_sg_keys(infra: dict[str, Any], inst: dict[str, Any]) -> list[str]:
     """
     EC2 インスタンスに付ける SG の key を返す（`security_groups` がなければ先頭の SG）。
@@ -753,7 +771,7 @@ def _moto_ipv6_filters() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _moto_target_health() -> Iterator[None]:
+def _moto_target_health(infra: dict[str, Any]) -> Iterator[None]:
     """
     moto の describe_target_health を、実際の AWS が返す状態に合わせる。
 
@@ -762,12 +780,17 @@ def _moto_target_health() -> Iterator[None]:
     - どの ELB にも使われていない TG のターゲット: `unused`（`Target.NotInUse`）
     - ヘルスチェックが無効な TG（Lambda の TG の既定）のターゲット: `unavailable`
       （`Target.HealthCheckDisabled`）
+    - 応える相手のいない IP のターゲット（`unanswered_ipv6_targets`）: `unhealthy`
+      （`Target.Timeout`）
+
+    :param infra: infra.yaml のデータ辞書
     """
     from unittest import mock
 
     from moto.elbv2.models import FakeHealthStatus, FakeTargetGroup
 
     original = FakeTargetGroup.health_for
+    unanswered = unanswered_ipv6_targets(infra)
 
     def health_for(self: Any, target: dict[str, Any], ec2_backend: Any) -> Any:
         status = original(self, target, ec2_backend)
@@ -785,6 +808,8 @@ def _moto_target_health() -> Iterator[None]:
                 "Target.HealthCheckDisabled",
                 "Health checks are not enabled for this target",
             )
+        elif status.instance_id in unanswered:
+            state, reason, description = ("unhealthy", "Target.Timeout", "Request timed out")
         else:
             return status
         return FakeHealthStatus(
@@ -818,7 +843,7 @@ def moto_environment(infra: dict[str, Any] | None = None) -> Iterator[TestEnv]:
     ):
         os.environ[name] = "testing"
     os.environ["AWS_DEFAULT_REGION"] = infra["region"]
-    with mock_aws(), _moto_ipv6_filters(), _moto_target_health():
+    with mock_aws(), _moto_ipv6_filters(), _moto_target_health(infra):
         session = boto3.Session(region_name=infra["region"])
         yield _build_environment(session, infra)
 

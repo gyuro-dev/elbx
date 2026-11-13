@@ -10,7 +10,7 @@ GET http://v6.elbx-test.internal/app
   ✓ Rule [priority:10] IF SourceIP in [2001:db8:1::/56]
       SourceIP '2001:db8:1:1::99' は [2001:db8:1::/56] に一致
   => Forward -> prod-v6-ip-tg
-     TG: prod-v6-ip-tg [3/3 healthy]
-       - [● healthy] 2001:db8:1:2::50 port=8080
-       - [● healthy] 2001:db8:1:3::50 port=8080
+     TG: prod-v6-ip-tg [1/3 healthy, 2 unhealthy]
+       - [✖ unhealthy] 2001:db8:1:2::50 port=8080 (Target.Timeout)
+       - [✖ unhealthy] 2001:db8:1:3::50 port=8080 (Target.Timeout)
        - [● healthy] v6-web-01 (2001:db8:1:1::31) port=8080
