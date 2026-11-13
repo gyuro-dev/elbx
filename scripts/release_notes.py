@@ -54,7 +54,12 @@ def main(argv: list[str]) -> int:
     if notes is None:
         print(f"CHANGELOG.md has no section for {version}", file=sys.stderr)
         return 1
-    sys.stdout.write(notes)
+    # Always UTF-8: the notes go to a file for GitHub, and the encoding of a Windows console
+    # (cp932) cannot write characters such as "–"
+    # いつも UTF-8 で出す。ノートは GitHub に渡すファイルになり、Windows の端末の文字コード
+    # （cp932）では「–」などを書けない
+    sys.stdout.buffer.write(notes.encode("utf-8"))
+    sys.stdout.flush()
     return 0
 
 
