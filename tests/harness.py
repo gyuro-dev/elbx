@@ -25,6 +25,7 @@ from typing import Any
 import boto3
 import yaml
 from moto import mock_aws
+from moto import settings as moto_settings
 
 from elbx import ELBClient
 
@@ -826,6 +827,23 @@ def _moto_target_health(infra: dict[str, Any]) -> Iterator[None]:
 
 
 @contextlib.contextmanager
+def _moto_certificates_stay_pending() -> Iterator[None]:
+    """
+    moto で要求した ACM 証明書を、PENDING_VALIDATION のままにする。
+
+    moto は、要求してから 60 秒たった証明書を ISSUED にする（`ACM_VALIDATION_WAIT`）。期待出力は
+    PENDING_VALIDATION で作っているので、テストの実行が 60 秒を超えると、あとのテストだけ状態が
+    変わってしまう（CI の遅いジョブで起きた）。
+    """
+    original = moto_settings.ACM_VALIDATION_WAIT
+    moto_settings.ACM_VALIDATION_WAIT = 10**9
+    try:
+        yield
+    finally:
+        moto_settings.ACM_VALIDATION_WAIT = original
+
+
+@contextlib.contextmanager
 def moto_environment(infra: dict[str, Any] | None = None) -> Iterator[TestEnv]:
     """
     moto を起動して `infra.yaml` の構成をインメモリで構築し、
@@ -843,7 +861,12 @@ def moto_environment(infra: dict[str, Any] | None = None) -> Iterator[TestEnv]:
     ):
         os.environ[name] = "testing"
     os.environ["AWS_DEFAULT_REGION"] = infra["region"]
-    with mock_aws(), _moto_ipv6_filters(), _moto_target_health(infra):
+    with (
+        mock_aws(),
+        _moto_ipv6_filters(),
+        _moto_target_health(infra),
+        _moto_certificates_stay_pending(),
+    ):
         session = boto3.Session(region_name=infra["region"])
         yield _build_environment(session, infra)
 
