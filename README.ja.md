@@ -40,7 +40,7 @@ $ elbx tree prod-web-alb
     │   │   └── ● web-prod-02
     │   └── prod-canary-tg (weight=10) [1/1 healthy]
     │       └── ● canary-prod-01
-    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    ├── [20] Method GET, POST AND Header(X-Env) ip-direct AND Query mode=fast AND SourceIP 203.0.113.0/24
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*
@@ -164,7 +164,7 @@ elbx tree prod-web-alb --json > alb.json       # 全情報を JSON で
     │   │   └── ● web-prod-01
     │   └── prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
     │       └── ◐ canary-prod-01 (draining)
-    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    ├── [20] Method GET, POST AND Header(X-Env) ip-direct AND Query mode=fast AND SourceIP 203.0.113.0/24
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*
@@ -284,7 +284,7 @@ GET https://edge.elbx-test.internal/auth/login
       ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
           Host 'edge.elbx-test.internal' は [api.elbx-test.internal] のいずれにも一致しません
           Path '/auth/login' は [/v1/*] のいずれにも一致しません
-      ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+      ✗ Rule [priority:20] IF Method in [GET, POST] AND Header(X-Env) in [ip-direct] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
           Header(X-Env) がリクエストにありません（-H で指定できます）
           Query '(なし)' は [mode=fast] のいずれにも一致しません
           送信元IPが未指定のため不一致として扱いました（--source-ip で指定できます）
@@ -308,9 +308,9 @@ POST https://api.elbx-test.internal/x?mode=fast
 入口: [APPLICATION] prod-web-alb (Listener HTTPS:443)
   ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
       Path '/x' は [/v1/*] のいずれにも一致しません
-  ✓ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
-      Header(X-Env) 'ip-direct' は [ip-direct] に一致
+  ✓ Rule [priority:20] IF Method in [GET, POST] AND Header(X-Env) in [ip-direct] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
       Method 'POST' は [GET, POST] に一致
+      Header(X-Env) 'ip-direct' は [ip-direct] に一致
       Query 'mode=fast' は [mode=fast] に一致
       SourceIP '203.0.113.10' は [203.0.113.0/24] に一致
   => Forward -> prod-ip-tg
@@ -457,9 +457,9 @@ elbx ls -s batch
 ```text
 NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)  ROUTE53 / DNS NAME
 ----------------  -----------  --------------------  ------  ---------------------  ------------------  -----------------------  -------------------------------------------------------------------------------------------------
-prod-web-alb      application  internet-facing       active  vpc-a4f21b708b96d5be5  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
-edge-ingress-nlb  network      internal              active  vpc-a4f21b708b96d5be5  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
 batch-nlb         network      internal              active  vpc-a4f21b708b96d5be5  TCP:9090            1/1 (1 TGs)              batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  vpc-a4f21b708b96d5be5  TCP:80, TCP:443     1/1 (1 TGs)              edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+prod-web-alb      application  internet-facing       active  vpc-a4f21b708b96d5be5  HTTP:80, HTTPS:443  6/7 (6 TGs)              api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
 v6-dualstack-alb  application  internal (dualstack)  active  vpc-a4f21b708b96d5be5  HTTP:80, HTTPS:443  1/3 (1 TGs, 要確認: 2)   v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
 ```
 

@@ -464,6 +464,18 @@ def _parse_ecs_task(
     return info, ips, host_ports
 
 
+def _sg_rule_sort_key(rule: SecurityGroupRuleSummary) -> tuple[str, int, str, str, str]:
+    """
+    SG のルールを並べるキー（プロトコル → ポートの始まりの数 → ポートの表示 → 相手 → 説明）。
+    `ALL` のポートは最初にする。
+
+    :param rule: SG のルール
+    """
+    start = rule.port_range.replace("/", "-").split("-", 1)[0]
+    port = int(start) if start.isdigit() else -1
+    return rule.protocol, port, rule.port_range, rule.source_or_dest, rule.description
+
+
 class Deferred(Generic[R]):
     """
     ほかの取得と並行して進める取得。作ったときに別のスレッドで始め、`result()` で結果を待つ。
@@ -687,6 +699,8 @@ class AWSFetcherMixin:
             raw_lbs = _collect_in_chunks(call, "LoadBalancers", "LoadBalancerArns", lb_arns)
         else:
             raw_lbs = _collect_pages(call, "LoadBalancers", "Marker", "NextMarker")
+            # 全件は名前の順に並べる（AWS は作り直すと別の順で返すことがある）
+            raw_lbs.sort(key=lambda lb: (lb.get("LoadBalancerName", ""), lb["LoadBalancerArn"]))
         if cache is not None:
             cache.add_load_balancers(raw_lbs, everything=names is None and lb_arns is None)
         return raw_lbs
@@ -1487,6 +1501,8 @@ class AWSFetcherMixin:
                         description=desc,
                     )
                 )
+        # プロトコル → ポート → 相手の順に並べる（AWS は作り直すと別の順で返すことがある）
+        rules.sort(key=_sg_rule_sort_key)
         return rules
 
     def _fetch_security_groups_map(self, sg_ids: list[str]) -> dict[str, SecurityGroupInfo]:

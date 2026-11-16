@@ -9,6 +9,17 @@ incompatible change raises the minor version).
 
 ### Changed
 
+- The output no longer depends on the order in which AWS returns things (it changed when the
+  same configuration was created again). elbx sorts: load balancers by name; the subnets of a
+  load balancer by Availability Zone; the security groups of a load balancer or a target by
+  name; security group rules by protocol, port and peer; the conditions of a rule as Host →
+  Path → Method → Header (by header name) → Query → SourceIP, and the values of each condition
+  alphabetically (`Method in [GET, POST]`; query pairs by key, then value); the target groups
+  of a weighted forward by weight (largest first), then name. The rules themselves stay in
+  priority order. This also applies to `--json` and the library (`RuleView.conditions` and
+  `condition_specs`, `RuleView.target_group_refs`, `LoadBalancerView.subnets`, the
+  `security_groups` lists, `SecurityGroupInfo.inbound_rules` / `outbound_rules`, and the order
+  of `ELBClient.list_load_balancers()`).
 - Faster `tree`, `targets` and `find`: fewer AWS API calls wait for one another. The health of
   the target groups is read without waiting for the listener rules; the EC2 instances and the
   ECS clusters, services and container instances of `instance` targets are read without waiting

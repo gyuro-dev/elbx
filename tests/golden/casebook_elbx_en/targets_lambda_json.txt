@@ -83,10 +83,10 @@
             "description": "Allow HTTP and HTTPS traffic from VPC",
             "inbound_rules": [
               {
-                "protocol": "TCP",
-                "port_range": "443",
+                "protocol": "ALL",
+                "port_range": "ALL",
                 "source_or_dest": "10.0.0.0/16",
-                "description": "HTTPS from VPC"
+                "description": "All VPC internal"
               },
               {
                 "protocol": "TCP",
@@ -95,10 +95,10 @@
                 "description": "HTTP range from VPC"
               },
               {
-                "protocol": "ALL",
-                "port_range": "ALL",
+                "protocol": "TCP",
+                "port_range": "443",
                 "source_or_dest": "10.0.0.0/16",
-                "description": "All VPC internal"
+                "description": "HTTPS from VPC"
               }
             ],
             "outbound_rules": [
@@ -158,10 +158,10 @@
               "description": "Allow HTTP and HTTPS traffic from VPC",
               "inbound_rules": [
                 {
-                  "protocol": "TCP",
-                  "port_range": "443",
+                  "protocol": "ALL",
+                  "port_range": "ALL",
                   "source_or_dest": "10.0.0.0/16",
-                  "description": "HTTPS from VPC"
+                  "description": "All VPC internal"
                 },
                 {
                   "protocol": "TCP",
@@ -170,10 +170,10 @@
                   "description": "HTTP range from VPC"
                 },
                 {
-                  "protocol": "ALL",
-                  "port_range": "ALL",
+                  "protocol": "TCP",
+                  "port_range": "443",
                   "source_or_dest": "10.0.0.0/16",
-                  "description": "All VPC internal"
+                  "description": "HTTPS from VPC"
                 }
               ],
               "outbound_rules": [
