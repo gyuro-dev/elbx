@@ -2179,6 +2179,37 @@ def test_tables_read_each_target_group_once(elb_client: ELBClient, argv: list[st
     assert calls["DescribeCertificate"] == 0
 
 
+def _record_api_params(client: Any, *operations: str) -> list[tuple[str, dict[str, Any]]]:
+    """`client` がこのあと `operations` を呼ぶときの `(操作, 引数)` を記録するリストを返す。"""
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def on_call(model: Any, params: dict[str, Any], **_: Any) -> None:
+        if model.name in operations:
+            recorded.append((model.name, dict(params)))
+
+    client.meta.events.register("provide-client-params", on_call)
+    return recorded
+
+
+def test_ecs_lists_ask_for_the_largest_page(elb_client: ELBClient) -> None:
+    """ECS の list_* は 1 回に 100 件を求める（list_services は指定しないと 10 件ずつになる）。"""
+    operations = ("ListClusters", "ListServices", "ListContainerInstances", "ListTasks")
+    recorded = _record_api_params(elb_client.ecs, *operations)
+    assert cli.main(["tree", "--no-color"], client=elb_client) == 0
+    assert {name for name, _ in recorded} == set(operations)
+    assert all(params.get("maxResults") == 100 for _, params in recorded)
+
+
+@pytest.mark.parametrize("argv", [["tree"], ["tree", "--full"], ["ls"]], ids=str)
+def test_each_target_group_health_is_read_once(elb_client: ELBClient, argv: list[str]) -> None:
+    """ルールを待たずに先に読み始めても、同じ TG のヘルスを 2 回読まない（下流の ELB でも）。"""
+    recorded = _record_api_params(elb_client.elbv2, "DescribeTargetHealth")
+    assert cli.main([*argv, "--no-color"], client=elb_client) == 0
+    read = Counter(params["TargetGroupArn"] for _, params in recorded)
+    assert read
+    assert set(read.values()) == {1}
+
+
 def test_route_reads_only_what_the_request_reaches(elb_client: ELBClient) -> None:
     """
     `route` は、ポートのリスナーのルールと、一致したルールの転送先の TG だけを読む
