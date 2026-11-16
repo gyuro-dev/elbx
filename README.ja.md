@@ -206,8 +206,9 @@ elbx tree prod-web-alb --json > alb.json       # 全情報を JSON で
 │   │   └── ap-northeast-1c: subnet-98d07c497a9e06c85 (public-subnet-1c) [10.0.2.0/24, 2001:db8:1:2::/64]
 │   └── Security Groups (1)
 │       └── sg-d820c3c652b9103b9 (prod-alb-sg)
-│           ├── in  allow TCP:443 from 10.0.0.0/16 # HTTPS from VPC
 │           ├── in  allow ALL:ALL from 10.0.0.0/16 # All VPC internal
+│           ├── in  allow TCP:80-8080 from 10.0.0.0/16 # HTTP range from VPC
+│           ├── in  allow TCP:443 from 10.0.0.0/16 # HTTPS from VPC
 │           └── out allow ALL:ALL to 0.0.0.0/0
 └── Listeners (2)
     ├── Listener HTTP:80
