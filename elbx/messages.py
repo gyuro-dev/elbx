@@ -315,6 +315,10 @@ MESSAGES: dict[str, dict[str, str]] = {
             "an IP address only matches as a whole: give the whole address (e.g. 10.0.1.11) "
             "or search by name."
         ),
+        "cli.hint.redirect_to_https": (
+            "without a scheme the URL is read as http:// (port 80), which is redirected to "
+            "HTTPS. To follow the HTTPS request: elbx route {url}"
+        ),
         "cli.hint.credentials": (
             "set up credentials (aws configure, environment variables) or choose a profile "
             "with --profile."
@@ -563,6 +567,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "cli.hint.partial_ip": (
             "IP アドレスは全体でしか一致しません。アドレス全体（例: 10.0.1.11）を書くか、"
             "名前で検索してください。"
+        ),
+        "cli.hint.redirect_to_https": (
+            "スキームのない URL は http://（ポート 80）として評価しました。HTTPS へ"
+            "リダイレクトされるので、その先は elbx route {url} で確かめられます。"
         ),
         "cli.hint.credentials": (
             "認証情報を設定する（aws configure、環境変数）か、--profile でプロファイルを"

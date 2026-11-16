@@ -260,6 +260,9 @@ cases:
   - name: route_http_default_redirect
     description: the default rule of the HTTP:80 listener redirects to HTTPS
     command: route http://api.elbx-test.internal/anything --no-color
+  - name: route_no_scheme_redirect_hint
+    description: without a scheme the URL is http://, so the request stops at the redirect to HTTPS, and a hint gives the https:// command
+    command: route api.elbx-test.internal/anything --no-color
   - name: route_http_rule
     description: forwarded by a rule of the HTTP:80 listener
     command: route http://api.elbx-test.internal/health-http --no-color

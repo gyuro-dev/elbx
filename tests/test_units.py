@@ -27,6 +27,7 @@ from elbx import (
     LoadBalancerView,
     ResourceNotFoundError,
     Route53RecordInfo,
+    RouteHop,
     RouteSimulationResult,
     RuleTargetGroupRef,
     RuleView,
@@ -2998,3 +2999,36 @@ def test_security_groups_of_a_resource_are_sorted_by_name() -> None:
         ("prod-alb-sg", "sg-1"),
         ("v6-web-sg", "sg-2"),
     ]
+
+
+# =============================================================================
+# route のリダイレクトのヒント
+# =============================================================================
+
+
+def _hop_with_actions(*actions: str, downstream: list[RouteHop] | None = None) -> RouteHop:
+    """一致したルールのアクションの要約が `actions` の段を作る。"""
+    lb = LoadBalancerView(
+        arn="arn:lb", name="lb", dns_name="", type="application", scheme="", state="", vpc_id=""
+    )
+    rule = RuleView(arn="", priority="default", is_default=True, actions_summary=list(actions))
+    return RouteHop(load_balancer=lb, port=80, matched_rule=rule, downstream=downstream or [])
+
+
+def test_redirect_to_https_is_found_in_downstream_hops() -> None:
+    """HTTPS へのリダイレクトは、下流の段でも見つける。HTTP へのリダイレクトは対象にしない。"""
+    to_https = _hop_with_actions("Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}")
+    to_http = _hop_with_actions("Redirect (HTTP_302) -> HTTP://other:80/#{path}")
+    forward = _hop_with_actions("Forward -> tg")
+    assert cli._redirects_to_https([to_https])
+    assert cli._redirects_to_https([_hop_with_actions("Forward -> nlb-tg", downstream=[to_https])])
+    assert not cli._redirects_to_https([to_http, forward])
+
+
+def test_route_json_has_no_redirect_hint(
+    elb_client: ELBClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--json` では、ヒントを出さない（ほかのヒントと同じ）。"""
+    argv = ["route", "api.elbx-test.internal/anything", "--json"]
+    assert cli.main(argv, client=elb_client) == 0
+    assert capsys.readouterr().err == ""

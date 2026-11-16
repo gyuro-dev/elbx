@@ -87,7 +87,7 @@ class SimulatedRequest:
             `source_ip` is not an IP address
             / スキームが http / https でない、ホスト名がない、`source_ip` が IP アドレスでない
         """
-        raw = mask_userinfo(url if _URL_SCHEME.match(url) else f"http://{url}")
+        raw = mask_userinfo(url if has_url_scheme(url) else f"http://{url}")
         parts = urlsplit(raw)
         scheme = parts.scheme.lower()
         if scheme not in ("http", "https"):
@@ -236,6 +236,15 @@ def wildcard_match(pattern: str, value: str, ignore_case: bool, escape: bool = F
 
 # URL の認証情報（`https://user:secret@host/` の `user:secret`）。パスより前の `@` まで
 _USERINFO = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#@]*@")
+
+
+def has_url_scheme(url: str) -> bool:
+    """
+    URL がスキーム（`https://` など）で始まるかを返す（ないと `http://` とみなす）。
+
+    :param url: `route` に渡された URL
+    """
+    return bool(_URL_SCHEME.match(url))
 
 
 def mask_userinfo(url: str) -> str:
