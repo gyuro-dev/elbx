@@ -78,6 +78,9 @@ ROUTE53_CACHE_TTL_SECONDS = 60.0
 # ELBv2 の describe_* で Names / ARN を一度に指定できる件数の上限
 ELBV2_BATCH_SIZE = 20
 
+# ECS の list_* で 1 回に受け取る件数（最大の 100。list_services は指定しないと 10 件ずつになる）
+ECS_LIST_PAGE_SIZE = 100
+
 # 1 つの ECS クラスターを読んだ結果: (サービス名 -> サービス, コンテナインスタンス -> EC2, タスク)
 _ECSClusterScan = tuple[dict[str, dict[str, Any]], dict[str, str], list[dict[str, Any]]]
 
@@ -752,8 +755,24 @@ class AWSFetcherMixin:
         :param tg_arn: 対象ターゲットグループのARN
         :return: `(tg_arn, TargetHealthDescriptionsリスト)` のタプル
         """
-        resp = self.elbv2.describe_target_health(TargetGroupArn=tg_arn)
-        return tg_arn, resp.get("TargetHealthDescriptions", [])
+        # 1 回の実行の中では 1 回だけ読む（ルールを待たずに先読みしたものも、ここで受け取る）
+        descriptions: list[dict[str, Any]] = self._once(
+            ("tg-health", tg_arn),
+            lambda: self.elbv2.describe_target_health(TargetGroupArn=tg_arn).get(
+                "TargetHealthDescriptions", []
+            ),
+        )
+        return tg_arn, descriptions
+
+    def _prefetch_tg_health(self, tg_arns: list[str]) -> None:
+        """
+        TG のヘルスを、ほかの取得（リスナーのルールなど）を待たずに読み始める。結果と失敗は、
+        あとで `_fetch_single_tg_health` を呼んだところに伝わる（1 回の実行の外では何もしない）。
+
+        :param tg_arns: 読む TG の ARN
+        """
+        if tg_arns and self._run_cache is not None:
+            self._start(lambda: self._parallel_map(self._fetch_single_tg_health, tg_arns))
 
     def _fetch_lb_attributes(self, lb_arn: str) -> tuple[str, dict[str, str]]:
         """
@@ -799,23 +818,48 @@ class AWSFetcherMixin:
 
         unique_ids = list(dict.fromkeys(instance_ids))
         ec2_map: dict[str, EC2InstanceInfo] = {}
-        for chunk in _chunked(unique_ids, 100):
-            try:
-                reservations = _collect_pages(
-                    self.ec2.describe_instances,
-                    "Reservations",
-                    Filters=[{"Name": "instance-id", "Values": chunk}],
-                )
-            except AWS_ERRORS as exc:
-                note_skipped("log.what.ec2_instances", exc)
-                continue
-
+        for _chunk, reservations in self._filter_in_chunks(
+            self.ec2.describe_instances,
+            "Reservations",
+            [("instance-id", unique_ids)],
+            "log.what.ec2_instances",
+        ):
             for res in reservations:
                 for inst in res.get("Instances", []):
                     info = self._parse_ec2_instance(inst)
                     if info:
                         ec2_map[info.instance_id] = info
         return ec2_map
+
+    def _filter_in_chunks(
+        self,
+        call: Callable[..., dict[str, Any]],
+        result_key: str,
+        filters: list[tuple[str, list[str]]],
+        what: str,
+    ) -> list[tuple[list[str], list[Any]]]:
+        """
+        EC2 の describe_* を、フィルタの値 100 件ごとに並行して呼ぶ（IPv4 と IPv6 のように
+        フィルタが複数あるときも、まとめて並行する）。失敗した塊は記録して、空にする。
+
+        :param call: 呼び出す boto3 クライアントメソッド
+        :param result_key: レスポンス辞書から結果リストを取り出すキー名
+        :param filters: `(フィルタ名, 値のリスト)` のリスト
+        :param what: 失敗したときに記録する、取得しようとしたものの messages.py のキー
+        :return: 塊ごとの `(照会した値, 結果)`（`filters` の順、塊の順）
+        """
+        jobs = [(name, chunk) for name, values in filters for chunk in _chunked(values, 100)]
+
+        def fetch(job: tuple[str, list[str]]) -> tuple[list[str], list[Any]]:
+            name, chunk = job
+            try:
+                filters_arg = [{"Name": name, "Values": chunk}]
+                return chunk, _collect_pages(call, result_key, Filters=filters_arg)
+            except AWS_ERRORS as exc:
+                note_skipped(what, exc)
+                return chunk, []
+
+        return self._parallel_map(fetch, jobs)
 
     def _fetch_ec2_instances_by_ips(
         self, private_ips: list[str]
@@ -833,31 +877,25 @@ class AWSFetcherMixin:
 
         v4_ips, v6_ips, canon_to_originals = _split_ips_for_filters(private_ips)
         ip_map: dict[str, dict[str, EC2InstanceInfo]] = {}
-        for filter_name, ip_list in (("private-ip-address", v4_ips), ("ipv6-address", v6_ips)):
-            for chunk in _chunked(ip_list, 100):
-                try:
-                    reservations = _collect_pages(
-                        self.ec2.describe_instances,
-                        "Reservations",
-                        Filters=[{"Name": filter_name, "Values": chunk}],
-                    )
-                except AWS_ERRORS as exc:
-                    note_skipped("log.what.ec2_instances", exc)
-                    continue
-
-                for res in reservations:
-                    for inst in res.get("Instances", []):
-                        info = self._parse_ec2_instance(inst)
-                        if not info:
-                            continue
-                        inst_ips = self._extract_instance_ips(inst)
-                        if info.private_ip and info.private_ip not in inst_ips:
-                            inst_ips.append(info.private_ip)
-                        vpc_id = inst.get("VpcId", "")
-                        for addr in inst_ips:
-                            canon = canonical_ip(addr) or addr
-                            for key in {addr, canon, *canon_to_originals.get(canon, ())}:
-                                ip_map.setdefault(key, {})[vpc_id] = info
+        for _chunk, reservations in self._filter_in_chunks(
+            self.ec2.describe_instances,
+            "Reservations",
+            [("private-ip-address", v4_ips), ("ipv6-address", v6_ips)],
+            "log.what.ec2_instances",
+        ):
+            for res in reservations:
+                for inst in res.get("Instances", []):
+                    info = self._parse_ec2_instance(inst)
+                    if not info:
+                        continue
+                    inst_ips = self._extract_instance_ips(inst)
+                    if info.private_ip and info.private_ip not in inst_ips:
+                        inst_ips.append(info.private_ip)
+                    vpc_id = inst.get("VpcId", "")
+                    for addr in inst_ips:
+                        canon = canonical_ip(addr) or addr
+                        for key in {addr, canon, *canon_to_originals.get(canon, ())}:
+                            ip_map.setdefault(key, {})[vpc_id] = info
         return ip_map
 
     @staticmethod
@@ -924,41 +962,32 @@ class AWSFetcherMixin:
 
         v4_ips, v6_ips, canon_to_originals = _split_ips_for_filters(private_ips)
         eni_map: dict[str, dict[str, ENIInfo]] = {}
-        for filter_name, ip_list in (
-            ("addresses.private-ip-address", v4_ips),
-            ("ipv6-addresses.ipv6-address", v6_ips),
+        for chunk, interfaces in self._filter_in_chunks(
+            self.ec2.describe_network_interfaces,
+            "NetworkInterfaces",
+            [("addresses.private-ip-address", v4_ips), ("ipv6-addresses.ipv6-address", v6_ips)],
+            "log.what.network_interfaces",
         ):
-            for chunk in _chunked(ip_list, 100):
-                chunk_canon_set = {canonical_ip(x) or x for x in chunk}
-                try:
-                    interfaces = _collect_pages(
-                        self.ec2.describe_network_interfaces,
-                        "NetworkInterfaces",
-                        Filters=[{"Name": filter_name, "Values": chunk}],
-                    )
-                except AWS_ERRORS as exc:
-                    note_skipped("log.what.network_interfaces", exc)
-                    continue
-
-                for ni in interfaces:
-                    sg_ids = [g["GroupId"] for g in ni.get("Groups", []) if g.get("GroupId")]
-                    for ip in self._extract_eni_ips(ni):
-                        canon = canonical_ip(ip) or ip
-                        if canon not in chunk_canon_set and ip not in chunk_canon_set:
-                            continue
-                        # 照会した表記・ENI が返した表記・正規化表記のどれでも引けるように登録する
-                        originals = canon_to_originals.get(canon, {ip})
-                        for key_ip in {ip, canon, *originals}:
-                            eni_map.setdefault(key_ip, {})[ni.get("VpcId", "")] = ENIInfo(
-                                network_interface_id=ni.get("NetworkInterfaceId", ""),
-                                private_ip=key_ip if key_ip in originals else ip,
-                                subnet_id=ni.get("SubnetId", ""),
-                                availability_zone=ni.get("AvailabilityZone", ""),
-                                interface_type=ni.get("InterfaceType", "interface"),
-                                description=ni.get("Description", ""),
-                                instance_id=ni.get("Attachment", {}).get("InstanceId", ""),
-                                security_group_ids=list(sg_ids),
-                            )
+            chunk_canon_set = {canonical_ip(x) or x for x in chunk}
+            for ni in interfaces:
+                sg_ids = [g["GroupId"] for g in ni.get("Groups", []) if g.get("GroupId")]
+                for ip in self._extract_eni_ips(ni):
+                    canon = canonical_ip(ip) or ip
+                    if canon not in chunk_canon_set and ip not in chunk_canon_set:
+                        continue
+                    # 照会した表記・ENI が返した表記・正規化表記のどれでも引けるように登録する
+                    originals = canon_to_originals.get(canon, {ip})
+                    for key_ip in {ip, canon, *originals}:
+                        eni_map.setdefault(key_ip, {})[ni.get("VpcId", "")] = ENIInfo(
+                            network_interface_id=ni.get("NetworkInterfaceId", ""),
+                            private_ip=key_ip if key_ip in originals else ip,
+                            subnet_id=ni.get("SubnetId", ""),
+                            availability_zone=ni.get("AvailabilityZone", ""),
+                            interface_type=ni.get("InterfaceType", "interface"),
+                            description=ni.get("Description", ""),
+                            instance_id=ni.get("Attachment", {}).get("InstanceId", ""),
+                            security_group_ids=list(sg_ids),
+                        )
         return eni_map
 
     @staticmethod
@@ -1051,11 +1080,8 @@ class AWSFetcherMixin:
 
         # EC2 インスタンス ID -> そのホストのタスクと「hostPort が分かっているか」
         tasks_per_instance: dict[str, list[tuple[ECSTaskInfo, bool]]] = {}
-        list_clusters = self.ecs.list_clusters
         with tolerate_aws_errors("log.what.ecs"):
-            cluster_arns = self._once(
-                "ecs-clusters", lambda: _collect_pages(list_clusters, "clusterArns", "nextToken")
-            )
+            cluster_arns = self._fetch_ecs_cluster_arns()
             for c_arn, (services, ci_to_ec2, tasks) in zip(
                 cluster_arns, self._parallel_map(scan, cluster_arns), strict=True
             ):
@@ -1133,6 +1159,56 @@ class AWSFetcherMixin:
         )
         return services.result(), ci_to_ec2, tasks
 
+    def _describe_ecs_in_chunks(
+        self,
+        c_arn: str,
+        arns: list[str],
+        size: int,
+        describe: Callable[[list[str]], dict[str, Any]],
+        result_key: str,
+    ) -> list[dict[str, Any]]:
+        """
+        ECS の describe_*（1 回に渡せる件数に上限がある）を、塊ごとに並行して呼ぶ。
+        失敗した塊は記録して、取得できた塊の分だけを返す。
+
+        :param c_arn: ECSクラスターのARN（記録に使う）
+        :param arns: 詳細を取得する ARN
+        :param size: 1 回に渡せる最大件数
+        :param describe: 塊を受け取って describe_* を呼ぶ関数
+        :param result_key: レスポンス辞書から結果リストを取り出すキー名
+        :return: 全塊の結果を連結したリスト（塊の順）
+        """
+
+        def fetch(chunk: list[str]) -> list[dict[str, Any]]:
+            with tolerate_aws_errors("log.what.ecs", _short_arn_name(c_arn)):
+                return list(describe(chunk).get(result_key, []))
+            return []
+
+        return [
+            item
+            for items in self._parallel_map(fetch, list(_chunked(arns, size)))
+            for item in items
+        ]
+
+    def _list_ecs(
+        self, call: Callable[..., dict[str, Any]], result_key: str, **kwargs: Any
+    ) -> list[str]:
+        """ECS の list_* を、1 回に受け取る件数を最大にして最後のページまで読む。"""
+        return _collect_pages(
+            call, result_key, "nextToken", maxResults=ECS_LIST_PAGE_SIZE, **kwargs
+        )
+
+    def _fetch_ecs_cluster_arns(self) -> list[str]:
+        """
+        ECS のクラスターの ARN を取得する（1 回の実行の中では 1 回だけ読む）。
+
+        :return: クラスターの ARN のリスト（ECS のクライアントがなければ空）
+        """
+        ecs = self.ecs
+        if ecs is None:
+            return []
+        return self._once("ecs-clusters", lambda: self._list_ecs(ecs.list_clusters, "clusterArns"))
+
     def _fetch_ecs_services(self, c_arn: str) -> dict[str, dict[str, Any]]:
         """
         クラスター内の全サービスの詳細を取得する（describe_services は1回最大10件）。
@@ -1145,11 +1221,15 @@ class AWSFetcherMixin:
         if ecs is None:
             return services
         with tolerate_aws_errors("log.what.ecs", _short_arn_name(c_arn)):
-            s_arns = _collect_pages(ecs.list_services, "serviceArns", "nextToken", cluster=c_arn)
-            for s_chunk in _chunked(s_arns, 10):
-                resp = ecs.describe_services(cluster=c_arn, services=s_chunk)
-                for svc in resp.get("services", []):
-                    services[svc.get("serviceName", "")] = svc
+            s_arns = self._list_ecs(ecs.list_services, "serviceArns", cluster=c_arn)
+            for svc in self._describe_ecs_in_chunks(
+                c_arn,
+                s_arns,
+                10,
+                lambda chunk: ecs.describe_services(cluster=c_arn, services=chunk),
+                "services",
+            ):
+                services[svc.get("serviceName", "")] = svc
         return services
 
     def _fetch_ecs_container_instances(self, c_arn: str) -> dict[str, str]:
@@ -1164,17 +1244,20 @@ class AWSFetcherMixin:
         if ecs is None:
             return ci_to_ec2
         with tolerate_aws_errors("log.what.ecs", _short_arn_name(c_arn)):
-            ci_arns = _collect_pages(
-                ecs.list_container_instances,
-                "containerInstanceArns",
-                "nextToken",
-                cluster=c_arn,
+            ci_arns = self._list_ecs(
+                ecs.list_container_instances, "containerInstanceArns", cluster=c_arn
             )
-            for ci_chunk in _chunked(ci_arns, 100):
-                resp = ecs.describe_container_instances(cluster=c_arn, containerInstances=ci_chunk)
-                for ci in resp.get("containerInstances", []):
-                    if ci.get("containerInstanceArn") and ci.get("ec2InstanceId"):
-                        ci_to_ec2[ci["containerInstanceArn"]] = ci["ec2InstanceId"]
+            for ci in self._describe_ecs_in_chunks(
+                c_arn,
+                ci_arns,
+                100,
+                lambda chunk: ecs.describe_container_instances(
+                    cluster=c_arn, containerInstances=chunk
+                ),
+                "containerInstances",
+            ):
+                if ci.get("containerInstanceArn") and ci.get("ec2InstanceId"):
+                    ci_to_ec2[ci["containerInstanceArn"]] = ci["ec2InstanceId"]
         return ci_to_ec2
 
     def _fetch_ecs_tasks(self, c_arn: str) -> list[dict[str, Any]]:
@@ -1184,15 +1267,19 @@ class AWSFetcherMixin:
         :param c_arn: ECSクラスターのARN
         :return: describe_tasks のタスク辞書のリスト（取得失敗時は取得できた分まで）
         """
-        tasks: list[dict[str, Any]] = []
         ecs = self.ecs
         if ecs is None:
-            return tasks
+            return []
         with tolerate_aws_errors("log.what.ecs", _short_arn_name(c_arn)):
-            t_arns = _collect_pages(ecs.list_tasks, "taskArns", "nextToken", cluster=c_arn)
-            for t_chunk in _chunked(t_arns, 100):
-                tasks += ecs.describe_tasks(cluster=c_arn, tasks=t_chunk).get("tasks", [])
-        return tasks
+            t_arns = self._list_ecs(ecs.list_tasks, "taskArns", cluster=c_arn)
+            return self._describe_ecs_in_chunks(
+                c_arn,
+                t_arns,
+                100,
+                lambda chunk: ecs.describe_tasks(cluster=c_arn, tasks=chunk),
+                "tasks",
+            )
+        return []
 
     # =========================================================================
     # AWS Lambda / VPC サブネット / セキュリティグループ / ACM / Route53 解決
@@ -1303,16 +1390,12 @@ class AWSFetcherMixin:
             # 同じ実行の中でもう取得したサブネットは読み直さない
             subnet_map.update({s: known[s] for s in unique_ids if s in known})
             unique_ids = [s for s in unique_ids if s not in known]
-            for chunk in _chunked(unique_ids, 100):
-                try:
-                    subnets = _collect_pages(
-                        self.ec2.describe_subnets,
-                        "Subnets",
-                        Filters=[{"Name": "subnet-id", "Values": chunk}],
-                    )
-                except AWS_ERRORS as exc:
-                    note_skipped("log.what.subnets", exc)
-                    continue
+            for _chunk, subnets in self._filter_in_chunks(
+                self.ec2.describe_subnets,
+                "Subnets",
+                [("subnet-id", unique_ids)],
+                "log.what.subnets",
+            ):
                 for sub in subnets:
                     s_id = sub.get("SubnetId", "")
                     if s_id:
@@ -1423,17 +1506,12 @@ class AWSFetcherMixin:
         sg_map: dict[str, SecurityGroupInfo] = {s: known[s] for s in unique_ids if s in known}
         unique_ids = [s for s in unique_ids if s not in known]
         # GroupIds= は削除済みの ID が1件でも混ざるとチャンク全体が失敗するため、フィルタで照会する
-        for chunk in _chunked(unique_ids, 100):
-            try:
-                groups = _collect_pages(
-                    self.ec2.describe_security_groups,
-                    "SecurityGroups",
-                    Filters=[{"Name": "group-id", "Values": chunk}],
-                )
-            except AWS_ERRORS as exc:
-                note_skipped("log.what.security_groups", exc)
-                continue
-
+        for _chunk, groups in self._filter_in_chunks(
+            self.ec2.describe_security_groups,
+            "SecurityGroups",
+            [("group-id", unique_ids)],
+            "log.what.security_groups",
+        ):
             for sg in groups:
                 g_id = sg.get("GroupId", "")
                 if not g_id:

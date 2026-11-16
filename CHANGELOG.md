@@ -7,6 +7,18 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- Faster `tree`, `targets` and `find`: fewer AWS API calls wait for one another. The health of
+  the target groups is read without waiting for the listener rules; the EC2 instances and the
+  ECS clusters, services and container instances of `instance` targets are read without waiting
+  for the network interfaces of the `ip` targets; the IPv4 and IPv6 lookups (and every 100 IDs)
+  run in parallel. With a fixed delay per call, `tree` waits for about 9 rounds of calls
+  instead of 11.
+- ECS: `ListServices` asks for 100 services per page (it returned 10 when not asked), and the
+  `Describe*` calls of one cluster run in parallel, so a cluster with many services or tasks
+  is read in fewer rounds.
+
 ## [0.1.1] - 2026-11-14
 
 ### Fixed

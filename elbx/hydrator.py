@@ -11,6 +11,7 @@ import copy
 import dataclasses
 import ipaddress
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -626,10 +627,14 @@ class ELBHydratorMixin(AWSFetcherMixin):
             raw_lbs, include_network, include_dns, include_attributes
         )
 
-        # 1. ELB ごとのターゲットグループ（リスナーとルールを待たずに取り始める）
-        raw_tgs_started = self._start(
-            lambda: self._collect_raw_target_groups(lb_arns, _shared_raw_tgs)
-        )
+        # 1. ELB ごとのターゲットグループ（リスナーとルールを待たずに取り始める）。分かった TG の
+        #    ヘルスも、ルールを待たずに読み始める（ルールからしか参照されない TG は 3. で読む）
+        def collect_raw_tgs() -> _RawTargetGroups:
+            collected = self._collect_raw_target_groups(lb_arns, _shared_raw_tgs)
+            self._prefetch_tg_health(list(collected.by_arn))
+            return collected
+
+        raw_tgs_started = self._start(collect_raw_tgs)
 
         # 2. 全ELBのリスナーと、全リスナーのルール（ルールの転送先にだけ出てくる TG も足す）
         listeners_lists = self._parallel_map(self._fetch_raw_listeners, lb_arns)
@@ -1023,9 +1028,13 @@ class ELBHydratorMixin(AWSFetcherMixin):
         # 1. 各ターゲットを種別ごとに振り分け、後続のAPIをバッチ実行できるように集約する
         ids = _classify_targets(raw_tgs, health_by_tg)
 
-        # 2. Lambda 関数は、ほかの実体と関係なく決まるので、先に取り始める
+        # 2. ENI を待たずに決まるものは、先に取り始める: Lambda 関数、instance ターゲットの EC2 と
+        #    ECS（クラスター・サービス・コンテナインスタンス）
         lambda_arns = list(ids.lambda_arns)
         lambdas = self._start(lambda: self._fetch_lambda_functions_map(lambda_arns))
+        direct_instance_ids = list(ids.instance_ids)
+        direct_ec2 = self._start(lambda: self._fetch_ec2_instances_map(direct_instance_ids))
+        self._prefetch_ecs(ids)
 
         # 3. IPターゲットの ENI（EC2 と、ELB のノードなら下流の ELB が決まる）
         eni_by_ip = self._resolve_enis(ids)
@@ -1058,7 +1067,9 @@ class ELBHydratorMixin(AWSFetcherMixin):
                 relevant_tg_arns=ecs_tg_arns,
             )
         )
-        ec2_by_id, ec2_by_ip = self._resolve_ec2(ids, eni_by_ip)
+        ec2_by_id, ec2_by_ip = self._resolve_ec2(
+            ids, eni_by_ip, set(direct_instance_ids), direct_ec2.result()
+        )
 
         lookups = _TargetLookups(
             ec2_by_id=ec2_by_id,
@@ -1138,17 +1149,54 @@ class ELBHydratorMixin(AWSFetcherMixin):
                 ids.downstream_lb_arns.add(eni.load_balancer_arn)
         return eni_by_ip
 
+    def _prefetch_ecs(self, ids: _TargetIds) -> None:
+        """
+        instance ターゲットがあるとき、ECS のクラスターの一覧と、各クラスターのサービスと
+        コンテナインスタンスを、ENI の逆引きを待たずに読み始める。どれも `_fetch_ecs_maps` が
+        ENI のあとで読むものと同じなので、そこで受け取る（1 回の実行の外では何もしない）。
+
+        IP ターゲットだけのときは先に読まない。ELB のノードの IP だけの TG では ECS を読まない
+        ので（どの IP がノードのものかは ENI で決まる）、先に読むと無駄な呼び出しになる。
+
+        :param ids: 振り分けたターゲット（ENI の逆引きの前）
+        """
+        if self.ecs is None or self._run_cache is None or not ids.instance_ids:
+            return
+
+        def read(job: tuple[str, str]) -> object:
+            kind, c_arn = job
+            if kind == "ecs-services":
+                return self._once((kind, c_arn), lambda: self._fetch_ecs_services(c_arn))
+            return self._once((kind, c_arn), lambda: self._fetch_ecs_container_instances(c_arn))
+
+        def run() -> None:
+            clusters = self._fetch_ecs_cluster_arns()
+            kinds = ["ecs-services", "ecs-container-instances"]
+            self._parallel_map(read, [(kind, c_arn) for c_arn in clusters for kind in kinds])
+
+        self._start(run)
+
     def _resolve_ec2(
-        self, ids: _TargetIds, eni_by_ip: dict[tuple[str, str], ENIInfo]
+        self,
+        ids: _TargetIds,
+        eni_by_ip: dict[tuple[str, str], ENIInfo],
+        direct_ids: AbstractSet[str] = frozenset(),
+        direct_ec2: dict[str, EC2InstanceInfo] | None = None,
     ) -> tuple[dict[str, EC2InstanceInfo], dict[tuple[str, str], EC2InstanceInfo]]:
         """
         EC2 をまとめて取得し、IP ターゲットの EC2 を ENI から決める。
 
         :param ids: 振り分けたターゲット（`_resolve_enis` のあと）
         :param eni_by_ip: IP ターゲットの ENI
+        :param direct_ids: ENI を待たずに照会したインスタンス ID（instance ターゲット）
+        :param direct_ec2: その照会の結果
         :return: `(EC2（キーはインスタンス ID）, IP ターゲットの EC2（キーは _ip_target_key）)`
         """
-        ec2_by_id = self._fetch_ec2_instances_map(list(ids.instance_ids))
+        # ENI から分かった EC2（instance ターゲットにないもの）だけを、ここで取得する
+        ec2_by_id = dict(direct_ec2 or {})
+        ec2_by_id.update(
+            self._fetch_ec2_instances_map([i for i in ids.instance_ids if i not in direct_ids])
+        )
         ec2_by_ip: dict[tuple[str, str], EC2InstanceInfo] = {
             key: ec2_by_id[eni.instance_id]
             for key, eni in eni_by_ip.items()
