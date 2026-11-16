@@ -87,8 +87,12 @@ def _match_subnet_for_ip(
 def _security_groups(
     sg_info_map: dict[str, SecurityGroupInfo], sg_ids: list[str]
 ) -> list[SecurityGroupInfo]:
-    """SG ID のリストを SecurityGroupInfo のリストにする（取得できなかった SG は ID だけ）。"""
-    return [sg_info_map.get(sg_id, SecurityGroupInfo(group_id=sg_id)) for sg_id in sg_ids]
+    """
+    SG ID のリストを、名前の順に並べた SecurityGroupInfo のリストにする（取得できなかった SG は
+    ID だけ）。AWS は作り直すと、EC2 や ENI の SG を別の順で返すことがあるため並べる。
+    """
+    infos = [sg_info_map.get(sg_id, SecurityGroupInfo(group_id=sg_id)) for sg_id in sg_ids]
+    return sorted(infos, key=lambda sg: (sg.group_name, sg.group_id))
 
 
 @dataclass

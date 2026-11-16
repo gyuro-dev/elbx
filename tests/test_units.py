@@ -30,6 +30,7 @@ from elbx import (
     RouteSimulationResult,
     RuleTargetGroupRef,
     RuleView,
+    SecurityGroupInfo,
     SubnetInfo,
     TargetGroupView,
     TargetLookupResult,
@@ -63,6 +64,7 @@ from elbx.hydrator import (
     _LBBatch,
     _link_downstream_lbs,
     _RawTargetGroups,
+    _security_groups,
     _sorted_conditions,
     _summarize_action,
     _target_groups_outside_load_balancers,
@@ -2982,3 +2984,17 @@ def test_load_balancers_and_subnets_are_sorted(elb_client: ELBClient) -> None:
     for lb in lbs:
         zones = [s.availability_zone for s in lb.subnets]
         assert zones == sorted(zones)
+
+
+def test_security_groups_of_a_resource_are_sorted_by_name() -> None:
+    """EC2 や ENI の SG は、AWS が返す順ではなく名前の順に並べる（読めなかった SG は ID だけ）。"""
+    infos = {
+        "sg-2": SecurityGroupInfo(group_id="sg-2", group_name="v6-web-sg"),
+        "sg-1": SecurityGroupInfo(group_id="sg-1", group_name="prod-alb-sg"),
+    }
+    groups = _security_groups(infos, ["sg-2", "sg-1", "sg-9"])
+    assert [(sg.group_name, sg.group_id) for sg in groups] == [
+        ("", "sg-9"),
+        ("prod-alb-sg", "sg-1"),
+        ("v6-web-sg", "sg-2"),
+    ]
