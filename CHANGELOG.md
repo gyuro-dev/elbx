@@ -7,6 +7,12 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- `elbx route` without a scheme (`elbx route api.example.com/x`): when the request, read as
+  `http://`, is redirected to HTTPS, a hint on stderr gives the `elbx route https://…` command
+  that follows it. The `http://` request itself is still what is evaluated.
+
 ### Changed
 
 - The output no longer depends on the order in which AWS returns things (it changed when the

@@ -35,7 +35,8 @@ from .formatter import (
     format_targets_table,
 )
 from .messages import LANGUAGES, MESSAGES, get_language, t, using_language
-from .models import TargetGroupView, _dumps_json
+from .models import RouteHop, TargetGroupView, _dumps_json
+from .simulator import has_url_scheme, mask_userinfo
 
 # =============================================================================
 # 引数の型
@@ -685,8 +686,35 @@ def _run_route(elb: ELBClient, args: argparse.Namespace, use_color: bool | None)
     )
     if args.json:
         _print_json(result.to_dict())
-    else:
-        print(format_route_simulation(result, use_color=use_color))
+        return
+    print(format_route_simulation(result, use_color=use_color))
+    # スキームを省くと http:// になり、ポート 80 が HTTPS へのリダイレクトだとそこで終わるので、
+    # https:// で試すように伝える（http:// を確かめたいこともあるので、続けて評価はしない）
+    if not has_url_scheme(args.url) and _redirects_to_https(result.entries):
+        url = mask_userinfo(f"https://{args.url}")
+        print(
+            t("cli.hint", hint=_escape_controls(t("cli.hint.redirect_to_https", url=url))),
+            file=sys.stderr,
+        )
+
+
+# リダイレクトの要約（`Redirect (HTTP_301) -> HTTPS://…`）が HTTPS へ向くか
+_REDIRECT_TO_HTTPS = re.compile(r"^Redirect \([^)]*\) -> https://", re.IGNORECASE)
+
+
+def _redirects_to_https(hops: Sequence[RouteHop]) -> bool:
+    """
+    一致したルールが HTTPS へのリダイレクトだった段があるかを返す（下流の段も見る）。
+
+    :param hops: `route` の評価の段
+    """
+    for hop in hops:
+        rule = hop.matched_rule
+        if rule is not None and any(_REDIRECT_TO_HTTPS.match(a) for a in rule.actions_summary):
+            return True
+        if _redirects_to_https(hop.downstream):
+            return True
+    return False
 
 
 _COMMANDS: dict[str, Callable[[ELBClient, argparse.Namespace, bool | None], None]] = {

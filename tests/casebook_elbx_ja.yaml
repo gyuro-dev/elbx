@@ -242,6 +242,9 @@ cases:
   - name: route_http_default_redirect
     description: HTTP:80 リスナーの default ルールで HTTPS へリダイレクト
     command: route http://api.elbx-test.internal/anything --no-color
+  - name: route_no_scheme_redirect_hint
+    description: スキームを省くと http:// になり、HTTPS へのリダイレクトで終わるので、https:// のコマンドをヒントで示す
+    command: route api.elbx-test.internal/anything --no-color
   - name: route_http_rule
     description: HTTP:80 リスナーのルールで転送
     command: route http://api.elbx-test.internal/health-http --no-color
