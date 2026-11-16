@@ -44,6 +44,7 @@ from elbx import (
 )
 from elbx.cli import _only_unhealthy
 from elbx.fetchers import (
+    AWSFetcherMixin,
     Deferred,
     ECSMaps,
     RunCache,
@@ -62,6 +63,7 @@ from elbx.hydrator import (
     _LBBatch,
     _link_downstream_lbs,
     _RawTargetGroups,
+    _sorted_conditions,
     _summarize_action,
     _target_groups_outside_load_balancers,
     _TargetIds,
@@ -2867,3 +2869,116 @@ def test_mistyped_command_with_control_characters_is_escaped(
     err = capsys.readouterr().err
     assert "\x1b" not in err
     assert "'a\\x1b[31mb' はコマンドではありません" in err
+
+
+# =============================================================================
+# 表示の順序（AWS が返す順ではなく、elbx が決めた順に並べる）
+# =============================================================================
+
+
+def test_rule_conditions_are_sorted_by_kind_and_value() -> None:
+    """条件は Host → Path → Method → Header → Query → SourceIP、値は文字の順に並べる。"""
+    conditions = [
+        {"Field": "source-ip", "SourceIpConfig": {"Values": ["10.0.0.0/8", "10.0.0.0/16"]}},
+        {
+            "Field": "query-string",
+            "QueryStringConfig": {
+                "Values": [{"Key": "b", "Value": "1"}, {"Value": "x"}, {"Key": "a", "Value": "2"}]
+            },
+        },
+        {
+            "Field": "http-header",
+            "HttpHeaderConfig": {"HttpHeaderName": "X-B", "Values": ["2", "1"]},
+        },
+        {"Field": "http-request-method", "HttpRequestMethodConfig": {"Values": ["POST", "GET"]}},
+        {"Field": "http-header", "HttpHeaderConfig": {"HttpHeaderName": "x-a", "Values": ["v"]}},
+        {
+            "Field": "path-pattern",
+            "PathPatternConfig": {"Values": ["/b", "/a"], "RegexValues": ["z", "y"]},
+        },
+        {"Field": "host-header", "Values": ["b.example.com", "a.example.com"]},
+    ]
+    original = json.dumps(conditions)
+    result = _sorted_conditions(conditions)
+    assert json.dumps(conditions) == original  # 元の辞書は変えない
+    assert [c["Field"] for c in result] == [
+        "host-header",
+        "path-pattern",
+        "http-request-method",
+        "http-header",
+        "http-header",
+        "query-string",
+        "source-ip",
+    ]
+    assert result[0]["Values"] == ["a.example.com", "b.example.com"]
+    assert result[1]["PathPatternConfig"] == {"Values": ["/a", "/b"], "RegexValues": ["y", "z"]}
+    assert result[2]["HttpRequestMethodConfig"]["Values"] == ["GET", "POST"]
+    assert [c["HttpHeaderConfig"]["HttpHeaderName"] for c in result[3:5]] == ["x-a", "X-B"]
+    assert result[4]["HttpHeaderConfig"]["Values"] == ["1", "2"]
+    assert result[5]["QueryStringConfig"]["Values"] == [
+        {"Value": "x"},
+        {"Key": "a", "Value": "2"},
+        {"Key": "b", "Value": "1"},
+    ]
+    assert result[6]["SourceIpConfig"]["Values"] == ["10.0.0.0/16", "10.0.0.0/8"]
+
+
+def test_weighted_forward_is_sorted_by_weight_then_name() -> None:
+    """重み付きの転送は、重みの大きい順 → 名前の順に並べる。"""
+
+    def arn(name: str) -> str:
+        return f"arn:aws:elasticloadbalancing:r:1:targetgroup/{name}/0"
+
+    action = {
+        "Type": "forward",
+        "ForwardConfig": {
+            "TargetGroups": [
+                {"TargetGroupArn": arn("canary"), "Weight": 10},
+                {"TargetGroupArn": arn("web-b"), "Weight": 45},
+                {"TargetGroupArn": arn("web-a"), "Weight": 45},
+            ]
+        },
+    }
+    summary, refs = _summarize_action(action, {})
+    assert [r.target_group_name for r in refs] == ["web-a", "web-b", "canary"]
+    assert summary == "Forward -> web-a (weight=45), web-b (weight=45), canary (weight=10)"
+
+
+def test_security_group_rules_are_sorted() -> None:
+    """SG のルールは、プロトコル → ポート → 相手の順に並べる（ALL のポートが先）。"""
+    perms = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "IpRanges": [{"CidrIp": "10.0.0.0/8"}],
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "IpRanges": [{"CidrIp": "b"}, {"CidrIp": "a"}],
+        },
+        {"IpProtocol": "tcp", "FromPort": 80, "ToPort": 90, "IpRanges": [{"CidrIp": "c"}]},
+        {"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+        {"IpProtocol": "icmp", "FromPort": 3, "ToPort": 4, "IpRanges": [{"CidrIp": "d"}]},
+    ]
+    rules = AWSFetcherMixin._parse_sg_permissions(perms)
+    assert [(r.protocol, r.port_range, r.source_or_dest) for r in rules] == [
+        ("ALL", "ALL", "0.0.0.0/0"),
+        ("ICMP", "3/4", "d"),
+        ("TCP", "80-90", "c"),
+        ("TCP", "443", "a"),
+        ("TCP", "443", "b"),
+        ("TCP", "8080", "10.0.0.0/8"),
+    ]
+
+
+def test_load_balancers_and_subnets_are_sorted(elb_client: ELBClient) -> None:
+    """ELB の一覧は名前の順、ELB のサブネットは AZ の順に並べる。"""
+    lbs = elb_client.list_load_balancers(include_dns=False)
+    names = [lb.name for lb in lbs]
+    assert names == sorted(names)
+    for lb in lbs:
+        zones = [s.availability_zone for s in lb.subnets]
+        assert zones == sorted(zones)

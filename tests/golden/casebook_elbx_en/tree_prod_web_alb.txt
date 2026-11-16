@@ -14,9 +14,9 @@
 │   │   └── ap-northeast-1c: <subnet:public_1c> (public-subnet-1c) [10.0.2.0/24, 2001:db8:1:2::/64]
 │   └── Security Groups (1)
 │       └── <sg:alb_sg> (prod-alb-sg)
-│           ├── in  allow TCP:443 from 10.0.0.0/16 # HTTPS from VPC
-│           ├── in  allow TCP:80-8080 from 10.0.0.0/16 # HTTP range from VPC
 │           ├── in  allow ALL:ALL from 10.0.0.0/16 # All VPC internal
+│           ├── in  allow TCP:80-8080 from 10.0.0.0/16 # HTTP range from VPC
+│           ├── in  allow TCP:443 from 10.0.0.0/16 # HTTPS from VPC
 │           └── out allow ALL:ALL to 0.0.0.0/0
 └── Listeners (2)
     ├── Listener HTTP:80
@@ -42,7 +42,7 @@
         │       ├── attrs: dereg_delay=300s
         │       └── [● healthy] canary-prod-01 [id=<i:canary_01>, port=8080, ip=10.0.1.21, az=ap-northeast-1a, type=t3.small, ec2=running]
         │           └── net: subnet=public-subnet-1a (<subnet:public_1a>, 10.0.1.0/24, 2001:db8:1:1::/64) | sg=prod-alb-sg (<sg:alb_sg>)
-        ├── Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+        ├── Rule [priority:20] IF Method in [GET, POST] AND Header(X-Env) in [ip-direct] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
         │   └── TG: prod-ip-tg (HTTP:9000, type=ip, HC=HTTP:traffic-port/ping) [1/1 healthy]
         │       ├── attrs: dereg_delay=300s
         │       └── [● healthy] [IP->EC2] web-prod-01 [id=<i:web_01>, port=9000, ip=10.0.1.11, az=ap-northeast-1a, type=t3.medium, ec2=running]

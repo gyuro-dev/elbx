@@ -20,7 +20,7 @@
     │   │   └── … ほか 1 台 (healthy)
     │   └── prod-canary-tg (weight=10) [1/1 healthy]
     │       └── ● canary-prod-01
-    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    ├── [20] Method GET, POST AND Header(X-Env) ip-direct AND Query mode=fast AND SourceIP 203.0.113.0/24
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*

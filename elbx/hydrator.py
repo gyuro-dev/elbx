@@ -302,6 +302,80 @@ def _resolve_ecs_for_target(
     return ecs_info
 
 
+# ルールの条件を並べる順（AWS はルールを作り直すと条件を別の順で返すことがあるので、elbx の側で
+# 決めた順に並べる。ここにない種類は最後に、受け取った順で並べる）
+_CONDITION_ORDER = (
+    "host-header",
+    "path-pattern",
+    "http-request-method",
+    "http-header",
+    "query-string",
+    "source-ip",
+)
+
+# 条件の値が入る *Config のキー
+_CONDITION_CONFIG_KEYS = {
+    "host-header": "HostHeaderConfig",
+    "path-pattern": "PathPatternConfig",
+    "http-request-method": "HttpRequestMethodConfig",
+    "http-header": "HttpHeaderConfig",
+    "query-string": "QueryStringConfig",
+    "source-ip": "SourceIpConfig",
+}
+
+
+def _query_pair_key(pair: dict[str, Any]) -> tuple[str, str]:
+    """query-string の値 `{"Key": …, "Value": …}` を並べるキー（キーのないものが先）。"""
+    return str(pair.get("Key") or ""), str(pair.get("Value") or "")
+
+
+def _sorted_condition(cond: dict[str, Any]) -> dict[str, Any]:
+    """
+    条件の値を文字の順に並べた写しを返す（1 つの条件の値は OR なので、並べても意味は変わらない）。
+    query-string の値はキー → 値の順に並べる。
+
+    :param cond: describe_rules の Condition 辞書
+    :return: 値を並べた写し（元の辞書は変えない）
+    """
+    result = copy.deepcopy(cond)
+    if isinstance(result.get("Values"), list):
+        result["Values"] = sorted(result["Values"])
+    config = result.get(_CONDITION_CONFIG_KEYS.get(result.get("Field", ""), ""))
+    if isinstance(config, dict):
+        values = config.get("Values")
+        if isinstance(values, list):
+            if result.get("Field") == "query-string":
+                config["Values"] = sorted(values, key=_query_pair_key)
+            else:
+                config["Values"] = sorted(values)
+        if isinstance(config.get("RegexValues"), list):
+            config["RegexValues"] = sorted(config["RegexValues"])
+    return result
+
+
+def _sorted_conditions(conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    ルールの条件を、種類の決まった順（`_CONDITION_ORDER`）に並べ、それぞれの値も並べる
+    （1 つのルールの条件は AND なので、並べても意味は変わらない）。同じ種類の条件
+    （http-header）は、ヘッダー名の順にする。
+
+    :param conditions: describe_rules の Conditions
+    :return: 並べた条件の写し
+    """
+
+    def key(cond: dict[str, Any]) -> tuple[int, str]:
+        field_name = cond.get("Field", "")
+        rank = (
+            _CONDITION_ORDER.index(field_name)
+            if field_name in _CONDITION_ORDER
+            else len(_CONDITION_ORDER)
+        )
+        header = str(cond.get("HttpHeaderConfig", {}).get("HttpHeaderName", "")).lower()
+        return rank, header
+
+    return sorted((_sorted_condition(cond) for cond in conditions), key=key)
+
+
 # 値のリストだけを持つ条件の表示名と、値が入る *Config のキー
 _VALUE_CONDITIONS = {
     "host-header": ("Host", "HostHeaderConfig"),
@@ -393,6 +467,8 @@ def _summarize_action(
             refs = [_tg_ref(act["TargetGroupArn"], None, tg_view_map)]
         else:
             return "", []
+        # 重みの大きい順 → 名前の順に並べる（AWS は作り直すと別の順で返すことがある）
+        refs.sort(key=lambda r: (-(r.weight or 0), r.target_group_name, r.target_group_arn))
         # 単一TGの ForwardConfig では weight=1 が自動付与されるため、複数TGのときだけ重みを出す
         parts = [
             f"{r.target_group_name} (weight={r.weight})"
@@ -876,10 +952,14 @@ class ELBHydratorMixin(AWSFetcherMixin):
         lb_view.route53_records = list(batch.route53.get(lb_view.dns_name, []))
         lb_view.attributes = batch.attributes.get(lb_arn, {})
         if include_network:
-            lb_view.subnets = [
-                _lb_subnet(az, batch.subnets.get(az.get("SubnetId", ""), {}))
-                for az in lb.get("AvailabilityZones", [])
-            ]
+            # AZ の順に並べる（AWS は作り直すと別の順で返すことがある）
+            lb_view.subnets = sorted(
+                (
+                    _lb_subnet(az, batch.subnets.get(az.get("SubnetId", ""), {}))
+                    for az in lb.get("AvailabilityZones", [])
+                ),
+                key=lambda s: (s.availability_zone, s.subnet_id),
+            )
             lb_view.security_groups = _security_groups(
                 batch.security_groups, lb.get("SecurityGroups", [])
             )
@@ -1417,7 +1497,8 @@ class ELBHydratorMixin(AWSFetcherMixin):
         :param tg_view_map: `{tg_arn: TargetGroupView}` のマップ
         :return: 構築された `RuleView`
         """
-        conditions = [_condition_text(cond) for cond in raw_rule.get("Conditions", [])]
+        condition_specs = _sorted_conditions(raw_rule.get("Conditions", []))
+        conditions = [_condition_text(cond) for cond in condition_specs]
         actions_summary: list[str] = []
         tg_refs: list[RuleTargetGroupRef] = []
         for act in sorted(raw_rule.get("Actions", []), key=lambda a: a.get("Order", 1)):
@@ -1433,7 +1514,7 @@ class ELBHydratorMixin(AWSFetcherMixin):
             conditions=conditions,
             actions_summary=actions_summary,
             target_group_refs=tg_refs,
-            condition_specs=list(raw_rule.get("Conditions", [])),
+            condition_specs=condition_specs,
         )
 
     @staticmethod

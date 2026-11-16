@@ -40,7 +40,7 @@ $ elbx tree prod-web-alb
     │   │   └── ● web-prod-02
     │   └── prod-canary-tg (weight=10) [1/1 healthy]
     │       └── ● canary-prod-01
-    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    ├── [20] Method GET, POST AND Header(X-Env) ip-direct AND Query mode=fast AND SourceIP 203.0.113.0/24
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*
@@ -162,7 +162,7 @@ elbx tree prod-web-alb --json > alb.json       # everything as JSON
     │   │   └── ● web-prod-01
     │   └── prod-canary-tg (weight=10) [0/1 healthy, 1 draining]
     │       └── ◐ canary-prod-01 (draining)
-    ├── [20] Header(X-Env) ip-direct AND Method GET, POST AND Query mode=fast AND SourceIP 203.0.113.0/24
+    ├── [20] Method GET, POST AND Header(X-Env) ip-direct AND Query mode=fast AND SourceIP 203.0.113.0/24
     │   └── prod-ip-tg [1/1 healthy]
     │       └── ● web-prod-01 (ip)
     ├── [25] Path /ecs/*
@@ -281,7 +281,7 @@ Entry: [NETWORK] edge-ingress-nlb (Listener TCP:443)
       ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
           Host 'edge.elbx-test.internal' matches none of [api.elbx-test.internal]
           Path '/auth/login' matches none of [/v1/*]
-      ✗ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
+      ✗ Rule [priority:20] IF Method in [GET, POST] AND Header(X-Env) in [ip-direct] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
           Header(X-Env) is not in the request (give it with -H)
           Query '(none)' matches none of [mode=fast]
           no source IP given, so taken as not matching (give it with --source-ip)
@@ -305,9 +305,9 @@ POST https://api.elbx-test.internal/x?mode=fast
 Entry: [APPLICATION] prod-web-alb (Listener HTTPS:443)
   ✗ Rule [priority:10] IF Host in [api.elbx-test.internal] AND Path in [/v1/*]
       Path '/x' matches none of [/v1/*]
-  ✓ Rule [priority:20] IF Header(X-Env) in [ip-direct] AND Method in [GET, POST] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
-      Header(X-Env) 'ip-direct' matches [ip-direct]
+  ✓ Rule [priority:20] IF Method in [GET, POST] AND Header(X-Env) in [ip-direct] AND Query in [mode=fast] AND SourceIP in [203.0.113.0/24]
       Method 'POST' matches [GET, POST]
+      Header(X-Env) 'ip-direct' matches [ip-direct]
       Query 'mode=fast' matches [mode=fast]
       SourceIP '203.0.113.10' matches [203.0.113.0/24]
   => Forward -> prod-ip-tg
@@ -452,9 +452,9 @@ elbx ls -s batch
 ```text
 NAME              TYPE         SCHEME                STATE   VPC                    LISTENERS           TARGETS (HEALTHY/TOTAL)    ROUTE53 / DNS NAME
 ----------------  -----------  --------------------  ------  ---------------------  ------------------  -------------------------  -------------------------------------------------------------------------------------------------
-prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)                api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
-edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)                edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
 batch-nlb         network      internal              active  vpc-c05aed80b218ef684  TCP:9090            1/1 (1 TGs)                batch-nlb-1.ap-northeast-1.elb.amazonaws.com
+edge-ingress-nlb  network      internal              active  vpc-c05aed80b218ef684  TCP:80, TCP:443     1/1 (1 TGs)                edge.elbx-test.internal -> edge-ingress-nlb-1.ap-northeast-1.elb.amazonaws.com
+prod-web-alb      application  internet-facing       active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  6/7 (6 TGs)                api.elbx-test.internal, app.elbx-test.internal -> prod-web-alb-1.ap-northeast-1.elb.amazonaws.com
 v6-dualstack-alb  application  internal (dualstack)  active  vpc-c05aed80b218ef684  HTTP:80, HTTPS:443  1/3 (1 TGs, attention: 2)  v6.elbx-test.internal -> v6-dualstack-alb-1.ap-northeast-1.elb.amazonaws.com
 ```
 
