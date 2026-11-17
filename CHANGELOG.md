@@ -7,6 +7,8 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-17
+
 ### Added
 
 - `elbx route` without a scheme (`elbx route api.example.com/x`): when the request, read as
@@ -200,6 +202,7 @@ incompatible change raises the minor version).
   literal; `repr()` of a load balancer, a target group, a target or a hop is one short line. The
   README examples pass `mypy --strict` as written.
 
-[Unreleased]: https://github.com/gyuro-dev/elbx/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/gyuro-dev/elbx/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gyuro-dev/elbx/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/gyuro-dev/elbx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gyuro-dev/elbx/releases/tag/v0.1.0
