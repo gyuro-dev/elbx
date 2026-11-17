@@ -1,0 +1,16 @@
+# case: route_no_scheme_redirect_hint
+# description: without a scheme the URL is http://, so the request stops at the redirect to HTTPS, and a hint gives the https:// command
+# command: elbx route api.elbx-test.internal/anything --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://api.elbx-test.internal/anything
+
+Entry: [APPLICATION] prod-web-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF Path in [/health-http]
+      Path '/anything' matches none of [/health-http]
+  ✓ Rule [default] IF DEFAULT (every request no other rule matched)
+      no rule matched, so the default rule applies
+  => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
+----- stderr -----
+Hint: without a scheme the URL is read as http:// (port 80), which is redirected to HTTPS. To follow the HTTPS request: elbx route https://api.elbx-test.internal/anything

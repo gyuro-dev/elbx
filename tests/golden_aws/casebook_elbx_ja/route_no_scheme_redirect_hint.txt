@@ -1,0 +1,16 @@
+# case: route_no_scheme_redirect_hint
+# description: スキームを省くと http:// になり、HTTPS へのリダイレクトで終わるので、https:// のコマンドをヒントで示す
+# command: elbx route api.elbx-test.internal/anything --no-color
+# state: default
+# exit_code: 0
+----- stdout -----
+GET http://api.elbx-test.internal/anything
+
+入口: [APPLICATION] prod-web-alb (Listener HTTP:80)
+  ✗ Rule [priority:10] IF Path in [/health-http]
+      Path '/anything' は [/health-http] のいずれにも一致しません
+  ✓ Rule [default] IF DEFAULT (すべての未一致リクエスト)
+      どのルールにも一致しなかったため default を適用
+  => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
+----- stderr -----
+ヒント: スキームのない URL は http://（ポート 80）として評価しました。HTTPS へリダイレクトされるので、その先は elbx route https://api.elbx-test.internal/anything で確かめられます。
