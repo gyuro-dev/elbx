@@ -77,6 +77,7 @@ from elbx.simulator import (
     _host_without_port,
     evaluate_condition,
     mask_userinfo,
+    redirect_url,
     simulate_hop,
 )
 
@@ -3006,23 +3007,118 @@ def test_security_groups_of_a_resource_are_sorted_by_name() -> None:
 # =============================================================================
 
 
-def _hop_with_actions(*actions: str, downstream: list[RouteHop] | None = None) -> RouteHop:
-    """一致したルールのアクションの要約が `actions` の段を作る。"""
+def _hop_with_redirect(
+    config: dict[str, Any] | None, port: int = 80, downstream: list[RouteHop] | None = None
+) -> RouteHop:
+    """一致したルールが `config` のリダイレクトをする段を作る（None ならリダイレクトしない）。"""
     lb = LoadBalancerView(
         arn="arn:lb", name="lb", dns_name="", type="application", scheme="", state="", vpc_id=""
     )
-    rule = RuleView(arn="", priority="default", is_default=True, actions_summary=list(actions))
-    return RouteHop(load_balancer=lb, port=80, matched_rule=rule, downstream=downstream or [])
+    rule = RuleView(arn="", priority="default", is_default=True, redirect_config=config)
+    return RouteHop(load_balancer=lb, port=port, matched_rule=rule, downstream=downstream or [])
 
 
-def test_redirect_to_https_is_found_in_downstream_hops() -> None:
+def _request(url: str) -> SimulatedRequest:
+    return SimulatedRequest.from_url(url)
+
+
+@pytest.mark.parametrize(
+    ("config", "url", "port", "expected"),
+    [
+        # HTTP:80 の既定の HTTPS へのリダイレクト（ポートの 443 は書かない）
+        (
+            {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"},
+            "api.example.com/x?id=1",
+            80,
+            "https://api.example.com/x?id=1",
+        ),
+        # 書いたポート（:80）は引き継がず、リダイレクトのポートにする
+        (
+            {"Protocol": "HTTPS", "Port": "443"},
+            "api.example.com:80/x",
+            80,
+            "https://api.example.com/x",
+        ),
+        # リダイレクトのポートとホスト
+        (
+            {"Protocol": "HTTPS", "Port": "8443"},
+            "api.example.com/x",
+            80,
+            "https://api.example.com:8443/x",
+        ),
+        (
+            {"Protocol": "HTTPS", "Host": "www.example.com", "Port": "443", "Path": "/new/#{path}"},
+            "api.example.com/x",
+            80,
+            "https://www.example.com/new/x",
+        ),
+        # クエリを変えるリダイレクト、プロトコルを変えないリダイレクト
+        (
+            {"Protocol": "HTTPS", "Port": "443", "Query": "utm=1&#{query}"},
+            "api.example.com/x?id=1",
+            80,
+            "https://api.example.com/x?utm=1&id=1",
+        ),
+        (
+            {"Host": "other.example.com"},
+            "api.example.com:8080/x",
+            8080,
+            "http://other.example.com:8080/x",
+        ),
+    ],
+)
+def test_redirect_url_follows_the_redirect_config(
+    config: dict[str, Any], url: str, port: int, expected: str
+) -> None:
+    """リダイレクト先は、RedirectConfig のホスト・ポート・パス・クエリから組み立てる。"""
+    assert redirect_url(config, _request(url), port) == expected
+
+
+def test_https_redirect_target_is_found_in_downstream_hops() -> None:
     """HTTPS へのリダイレクトは、下流の段でも見つける。HTTP へのリダイレクトは対象にしない。"""
-    to_https = _hop_with_actions("Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}")
-    to_http = _hop_with_actions("Redirect (HTTP_302) -> HTTP://other:80/#{path}")
-    forward = _hop_with_actions("Forward -> tg")
-    assert cli._redirects_to_https([to_https])
-    assert cli._redirects_to_https([_hop_with_actions("Forward -> nlb-tg", downstream=[to_https])])
-    assert not cli._redirects_to_https([to_http, forward])
+    req = _request("api.example.com/x")
+    to_https = _hop_with_redirect({"Protocol": "HTTPS", "Port": "8443"})
+    to_http = _hop_with_redirect({"Protocol": "HTTP", "Host": "other", "Port": "80"})
+    forward = _hop_with_redirect(None)
+    assert cli._https_redirect_target([to_https], req) == "https://api.example.com:8443/x"
+    nested = _hop_with_redirect(None, downstream=[to_https])
+    assert cli._https_redirect_target([nested], req) == "https://api.example.com:8443/x"
+    assert cli._https_redirect_target([to_http, forward], req) is None
+
+
+def test_rule_view_keeps_the_redirect_config(elb_client: ELBClient) -> None:
+    """リダイレクトするルールは、RedirectConfig を `redirect_config` に持つ。"""
+    lb = elb_client.get_load_balancer("prod-web-alb", include_dns=False)
+    rules = [rule for listener in lb.listeners for rule in listener.rules]
+    redirects = [rule for rule in rules if rule.redirect_config is not None]
+    assert redirects
+    assert all(rule.redirect_config.get("Protocol") == "HTTPS" for rule in redirects)  # type: ignore[union-attr]
+    assert not any(
+        a.startswith("Redirect")
+        for rule in rules
+        if rule.redirect_config is None
+        for a in rule.actions_summary
+    )
+
+
+@pytest.mark.parametrize(
+    ("extra", "same_options"),
+    [([], False), (["-X", "POST"], True), (["-H", "Authorization: Bearer secret"], True)],
+    ids=["no_options", "method", "header"],
+)
+def test_redirect_hint_says_to_repeat_the_options(
+    elb_client: ELBClient,
+    capsys: pytest.CaptureFixture[str],
+    extra: list[str],
+    same_options: bool,
+) -> None:
+    """ほかのオプションがあれば「同じものを付けて」と添える。ヘッダーの値は書き写さない。"""
+    argv = ["--lang", "en", "route", "api.elbx-test.internal/anything", *extra, "--no-color"]
+    assert cli.main(argv, client=elb_client) == 0
+    err = capsys.readouterr().err
+    assert "elbx route https://api.elbx-test.internal/anything" in err
+    assert ("(with the same options)" in err) is same_options
+    assert "secret" not in err
 
 
 def test_route_json_has_no_redirect_hint(
@@ -3032,3 +3128,22 @@ def test_route_json_has_no_redirect_hint(
     argv = ["route", "api.elbx-test.internal/anything", "--json"]
     assert cli.main(argv, client=elb_client) == 0
     assert capsys.readouterr().err == ""
+
+
+def test_list_load_balancers_by_names_is_sorted(elb_client: ELBClient) -> None:
+    """`names` を指定しても、指定の順や AWS が返す順ではなく名前の順に返す。"""
+    names = ["prod-web-alb", "batch-nlb", "edge-ingress-nlb"]
+    lbs = elb_client.list_load_balancers(names=names, include_relations=False)
+    assert [lb.name for lb in lbs] == sorted(names)
+
+
+def test_sorting_conditions_does_not_fail_on_unexpected_values() -> None:
+    """比べられない値（辞書・None）があっても、条件の並べ替えで落ちない。"""
+    conditions = [
+        {"Field": "future-field", "Values": [{"b": 1}, None, "x", {"a": 2}]},
+        {"Field": "host-header", "HostHeaderConfig": {"Values": ["b", "a"]}},
+    ]
+    result = _sorted_conditions(conditions)
+    assert [c["Field"] for c in result] == ["host-header", "future-field"]
+    assert result[0]["HostHeaderConfig"]["Values"] == ["a", "b"]
+    assert result[1]["Values"][0] == "x"

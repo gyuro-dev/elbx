@@ -389,8 +389,8 @@ def _ecs_service_info(c_arn: str, svc: dict[str, Any], lb_cfg: dict[str, Any]) -
         launch_type=svc.get("launchType", ""),
         last_status=svc.get("status", "ACTIVE"),
         container_name=lb_cfg.get("containerName", ""),
-        subnet_ids=list(awsvpc.get("subnets", [])),
-        security_group_ids=list(awsvpc.get("securityGroups", [])),
+        subnet_ids=sorted(awsvpc.get("subnets", [])),
+        security_group_ids=sorted(awsvpc.get("securityGroups", [])),
     )
 
 
@@ -458,10 +458,27 @@ def _parse_ecs_task(
         private_ip=ips[0] if ips else "",
         container_name=", ".join(dict.fromkeys(container_names)),
         availability_zone=task.get("availabilityZone", ""),
-        subnet_ids=list(dict.fromkeys([*subnet_ids, *awsvpc.get("subnets", [])])),
-        security_group_ids=list(awsvpc.get("securityGroups", [])),
+        # タスクのサブネットを先に、サービスの設定のサブネットはそのあとに ID の順で
+        subnet_ids=list(dict.fromkeys([*subnet_ids, *sorted(awsvpc.get("subnets", []))])),
+        security_group_ids=sorted(awsvpc.get("securityGroups", [])),
     )
     return info, ips, host_ports
+
+
+def lb_sort_key(lb: dict[str, Any]) -> tuple[str, str]:
+    """生の ELB 辞書を並べるキー（名前 → ARN。AWS が返す順によらない）。"""
+    return lb.get("LoadBalancerName", ""), lb["LoadBalancerArn"]
+
+
+def _attribute_dict(resp: dict[str, Any]) -> dict[str, str]:
+    """
+    describe_*_attributes の応答を、キーの順に並べた `{属性キー: 値}` にする（AWS が返す順に
+    よらず、JSON のキーの順が同じになるように）。
+
+    :param resp: describe_load_balancer_attributes / describe_target_group_attributes の応答
+    """
+    pairs = {a["Key"]: a.get("Value", "") for a in resp.get("Attributes", []) if "Key" in a}
+    return dict(sorted(pairs.items()))
 
 
 def _sg_rule_sort_key(rule: SecurityGroupRuleSummary) -> tuple[str, int, str, str, str]:
@@ -700,7 +717,7 @@ class AWSFetcherMixin:
         else:
             raw_lbs = _collect_pages(call, "LoadBalancers", "Marker", "NextMarker")
             # 全件は名前の順に並べる（AWS は作り直すと別の順で返すことがある）
-            raw_lbs.sort(key=lambda lb: (lb.get("LoadBalancerName", ""), lb["LoadBalancerArn"]))
+            raw_lbs.sort(key=lb_sort_key)
         if cache is not None:
             cache.add_load_balancers(raw_lbs, everything=names is None and lb_arns is None)
         return raw_lbs
@@ -797,7 +814,7 @@ class AWSFetcherMixin:
         """
         with tolerate_aws_errors("log.what.lb_attributes", lb_arn):
             resp = self.elbv2.describe_load_balancer_attributes(LoadBalancerArn=lb_arn)
-            return lb_arn, {a["Key"]: a.get("Value", "") for a in resp.get("Attributes", [])}
+            return lb_arn, _attribute_dict(resp)
         return lb_arn, {}
 
     def _fetch_tg_attributes(self, tg_arn: str) -> tuple[str, dict[str, str]]:
@@ -809,7 +826,7 @@ class AWSFetcherMixin:
         """
         with tolerate_aws_errors("log.what.tg_attributes", tg_arn):
             resp = self.elbv2.describe_target_group_attributes(TargetGroupArn=tg_arn)
-            return tg_arn, {a["Key"]: a.get("Value", "") for a in resp.get("Attributes", [])}
+            return tg_arn, _attribute_dict(resp)
         return tg_arn, {}
 
     # =========================================================================
@@ -954,9 +971,9 @@ class AWSFetcherMixin:
             availability_zone=inst.get("Placement", {}).get("AvailabilityZone", ""),
             instance_type=inst.get("InstanceType", ""),
             subnet_id=inst.get("SubnetId", ""),
-            security_group_ids=[
+            security_group_ids=sorted(
                 sg.get("GroupId", "") for sg in inst.get("SecurityGroups", []) if sg.get("GroupId")
-            ],
+            ),
         )
 
     def _fetch_eni_map_by_ips(self, private_ips: list[str]) -> dict[str, dict[str, ENIInfo]]:
@@ -984,7 +1001,7 @@ class AWSFetcherMixin:
         ):
             chunk_canon_set = {canonical_ip(x) or x for x in chunk}
             for ni in interfaces:
-                sg_ids = [g["GroupId"] for g in ni.get("Groups", []) if g.get("GroupId")]
+                sg_ids = sorted(g["GroupId"] for g in ni.get("Groups", []) if g.get("GroupId"))
                 for ip in self._extract_eni_ips(ni):
                     canon = canonical_ip(ip) or ip
                     if canon not in chunk_canon_set and ip not in chunk_canon_set:
@@ -1323,8 +1340,8 @@ class AWSFetcherMixin:
                 last_modified=cfg.get("LastModified", ""),
                 description=cfg.get("Description", ""),
                 vpc_id=vpc_cfg.get("VpcId", ""),
-                subnet_ids=list(vpc_cfg.get("SubnetIds", [])),
-                security_group_ids=list(vpc_cfg.get("SecurityGroupIds", [])),
+                subnet_ids=sorted(vpc_cfg.get("SubnetIds", [])),
+                security_group_ids=sorted(vpc_cfg.get("SecurityGroupIds", [])),
             )
         except AWS_ERRORS as exc:
             note_skipped("log.what.lambda", exc, fn_arn)
@@ -1557,7 +1574,7 @@ class AWSFetcherMixin:
             return c_arn, CertificateInfo(
                 certificate_arn=c_arn,
                 domain_name=c.get("DomainName", ""),
-                subject_alternative_names=c.get("SubjectAlternativeNames", []),
+                subject_alternative_names=sorted(c.get("SubjectAlternativeNames", [])),
                 status=c.get("Status", ""),
                 not_after=_format_datetime(c.get("NotAfter")),
                 in_use=bool(c.get("InUseBy")),

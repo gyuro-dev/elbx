@@ -854,7 +854,7 @@ classDiagram
 | `LoadBalancerView` | `arn`, `name`, `dns_name`, `type`, `scheme`, `state`, `vpc_id`, `ip_address_type` (`ipv4` / `dualstack` / ...), `attributes`, `route53_records`, `subnets`, `security_groups`, `listeners`, `target_groups`, `all_targets` |
 | `Route53RecordInfo` | `zone_id`, `zone_name`, `record_name`, `record_type`, `is_alias`, `private_zone`, `ttl`, `evaluate_target_health` |
 | `ListenerView` | `port`, `protocol`, `ssl_policy`, `certificates`, `rules` |
-| `RuleView` | `priority` (including `"default"`), `is_default`, `conditions`, `condition_text`, `condition_specs`, `actions_summary`, `target_group_refs` |
+| `RuleView` | `priority` (including `"default"`), `is_default`, `conditions`, `condition_text`, `condition_specs`, `actions_summary`, `target_group_refs`, `redirect_config` |
 | `RuleTargetGroupRef` | `target_group_arn`, `target_group_name`, `weight`, `target_group` |
 | `TargetGroupView` | `name`, `protocol`, `port`, `target_type`, `ip_address_type` (`ipv4` / `ipv6`), health check settings, `attributes`, `targets`, `healthy_count` / `unhealthy_count` / `draining_count` / `health_summary`, `needs_attention(target)` / `attention_count` (the targets `--unhealthy` shows) |
 | `TargetView` | `target_id`, `port`, `health_state`, `health_reason`, `health_description`, `availability_zone`, `ec2` / `ecs` / `lambda_function` / `eni` / `downstream_lb` (the load balancer behind the target, an ALB or an NLB), `ip_subnet` (the subnet found by matching the IP with the subnet CIDRs), and the common properties `target_kind` (the `TargetKind` literal), `display_name`, `ip_address`, `subnet`, `subnets`, `security_groups` |

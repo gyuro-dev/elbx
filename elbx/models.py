@@ -647,11 +647,13 @@ class RuleView:
     """
     A listener rule: priority (`"default"` for the default rule), conditions, actions and
     the target groups it forwards to. `conditions` / `actions_summary` are readable texts;
-    `condition_specs` are the raw `Conditions` of `describe_rules`, used by `route`.
+    `condition_specs` are the raw `Conditions` of `describe_rules`, used by `route`;
+    `redirect_config` is the raw `RedirectConfig` of the redirect action (None without one).
 
     リスナールール。優先度（default ルールは `"default"`）・条件・アクション・転送先の TG を持つ。
     `conditions` / `actions_summary` は表示用の文字列、`condition_specs` は `describe_rules` の
-    `Conditions` そのもの（`route` の評価に使う）。
+    `Conditions` そのもの（`route` の評価に使う）、`redirect_config` はリダイレクトのアクションの
+    `RedirectConfig` そのもの（なければ None）。
     """
 
     arn: str
@@ -662,6 +664,8 @@ class RuleView:
     target_group_refs: list[RuleTargetGroupRef] = field(default_factory=list)
     # describe_rules の Conditions そのもの（route シミュレーションの評価に使用）
     condition_specs: list[dict[str, Any]] = field(default_factory=list)
+    # リダイレクトのアクションの RedirectConfig そのもの（リダイレクトしないルールは None）
+    redirect_config: dict[str, Any] | None = None
 
     @property
     def non_forward_actions(self) -> list[str]:

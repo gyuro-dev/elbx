@@ -13,4 +13,4 @@ Entry: [APPLICATION] prod-web-alb (Listener HTTP:80)
       no rule matched, so the default rule applies
   => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
 ----- stderr -----
-Hint: without a scheme the URL is read as http:// (port 80), which is redirected to HTTPS. To follow the HTTPS request: elbx route https://api.elbx-test.internal/anything
+Hint: without a scheme the URL is read as http://, and the request is redirected to HTTPS. To follow the HTTPS request: elbx route https://api.elbx-test.internal/anything

@@ -30,11 +30,19 @@ MAX_ROUTE_DEPTH = 5
 # URL の先頭のスキーム（クエリの中の `next=https://…` をスキームと取り違えない）
 _URL_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://")
 
-# RegexValues を持てる条件の設定キー
-_REGEX_CONFIG_KEYS = {
+# 条件の種類（`Field`）-> 値が入る *Config のキー（表示・並べ替え・評価で共有する）
+CONDITION_CONFIG_KEYS = {
     "host-header": "HostHeaderConfig",
     "path-pattern": "PathPatternConfig",
+    "http-request-method": "HttpRequestMethodConfig",
     "http-header": "HttpHeaderConfig",
+    "query-string": "QueryStringConfig",
+    "source-ip": "SourceIpConfig",
+}
+
+# RegexValues を持てる条件の設定キー
+_REGEX_CONFIG_KEYS = {
+    field: CONDITION_CONFIG_KEYS[field] for field in ("host-header", "path-pattern", "http-header")
 }
 
 
@@ -236,6 +244,46 @@ def wildcard_match(pattern: str, value: str, ignore_case: bool, escape: bool = F
 
 # URL の認証情報（`https://user:secret@host/` の `user:secret`）。パスより前の `@` まで
 _USERINFO = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#@]*@")
+
+
+# RedirectConfig の値に書ける、リクエストの値を表す記号
+_REDIRECT_TOKEN = re.compile(r"#\{(protocol|host|port|path|query)\}")
+
+
+def redirect_url(config: dict[str, Any], req: SimulatedRequest, port: int) -> str:
+    """
+    リダイレクトのアクション（`RedirectConfig`）が返す URL を、リクエストから組み立てる。
+
+    ALB と同じく、省いた項目はリクエストのまま（Protocol `#{protocol}`、Host `#{host}`、Port
+    `#{port}`、Path `/#{path}`、Query `#{query}`）とし、値の中の `#{…}` をリクエストの値に
+    置き換える。`#{path}` は先頭の `/` を除いたパス。ポートは、スキームの既定（http は 80、
+    https は 443）なら URL に書かない。
+
+    :param config: `RedirectConfig`
+    :param req: 評価したリクエスト
+    :param port: そのリクエストが届いたリスナーのポート
+    :return: リダイレクト先の URL（例: `https://api.example.com/x?id=1`）
+    """
+    values = {
+        "protocol": req.scheme.upper(),
+        "host": req.host,
+        "port": str(port),
+        "path": req.path.lstrip("/"),
+        "query": req.raw_query,
+    }
+
+    def expand(name: str, default: str) -> str:
+        text = str(config.get(name) or default)
+        return _REDIRECT_TOKEN.sub(lambda m: values[m.group(1)], text)
+
+    scheme = expand("Protocol", "#{protocol}").lower()
+    host = expand("Host", "#{host}")
+    target_port = expand("Port", "#{port}")
+    path = expand("Path", "/#{path}")
+    query = expand("Query", "#{query}")
+    default_port = {"http": "80", "https": "443"}.get(scheme)
+    netloc = host if target_port == default_port else f"{host}:{target_port}"
+    return f"{scheme}://{netloc}{path}" + (f"?{query}" if query else "")
 
 
 def has_url_scheme(url: str) -> bool:

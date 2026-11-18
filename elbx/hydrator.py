@@ -41,6 +41,7 @@ from .models import (
     TargetView,
 )
 from .simulator import (
+    CONDITION_CONFIG_KEYS,
     SimulatedRequest,
     _regex_values,
     _values,
@@ -82,6 +83,29 @@ def _match_subnet_for_ip(
                 if ip_obj in ipaddress.ip_network(cidr):
                     return s_info
     return None
+
+
+def _subnet_sort_key(subnet: SubnetInfo) -> tuple[str, str, str]:
+    """サブネットを並べるキー（AZ → 名前 → ID。AWS が返す順によらない）。"""
+    return subnet.availability_zone, subnet.name, subnet.subnet_id
+
+
+def _ordered_subnet_ids(subnet_ids: list[str], subnet_map: dict[str, SubnetInfo]) -> list[str]:
+    """
+    サブネット ID を、詳細が分かるものはそのサブネットの順（`_subnet_sort_key`）、分からないものは
+    そのあとに ID の順で並べる（重複は除く）。
+
+    :param subnet_ids: サブネット ID
+    :param subnet_map: `{subnet_id: SubnetInfo}`
+    """
+    unique = list(dict.fromkeys(subnet_ids))
+    known = sorted((subnet_map[s] for s in unique if s in subnet_map), key=_subnet_sort_key)
+    return [s.subnet_id for s in known] + sorted(s for s in unique if s not in subnet_map)
+
+
+def _tg_sort_key(tg: TargetGroupView) -> tuple[str, str]:
+    """TG を並べるキー（名前 → ARN。AWS が返す順によらない）。"""
+    return tg.name, tg.arn
 
 
 def _security_groups(
@@ -279,20 +303,23 @@ def _resolve_ecs_for_target(
             ecs_info.private_ip = ec2_info.private_ip
 
     # IPからCIDR照合で特定したサブネットをサービス全体のサブネットより優先する
+    # （ほかのサブネットと SG は、AWS が返す順によらない順に並べる）
+    subnet_ids = _ordered_subnet_ids(ecs_info.subnet_ids, lookups.subnet_info_map)
     if matched_ip_subnet:
         ecs_info.subnets = [matched_ip_subnet]
-        if matched_ip_subnet.subnet_id not in ecs_info.subnet_ids:
-            ecs_info.subnet_ids = [matched_ip_subnet.subnet_id, *ecs_info.subnet_ids]
+        ecs_info.subnet_ids = [
+            matched_ip_subnet.subnet_id,
+            *(s for s in subnet_ids if s != matched_ip_subnet.subnet_id),
+        ]
     else:
+        ecs_info.subnet_ids = subnet_ids
         ecs_info.subnets = [
-            lookups.subnet_info_map[s] for s in ecs_info.subnet_ids if s in lookups.subnet_info_map
+            lookups.subnet_info_map[s] for s in subnet_ids if s in lookups.subnet_info_map
         ]
 
-    if eni_info:
-        for sg_id in eni_info.security_group_ids:
-            if sg_id not in ecs_info.security_group_ids:
-                ecs_info.security_group_ids.append(sg_id)
-    ecs_info.security_groups = lookups.security_groups(ecs_info.security_group_ids)
+    sg_ids = [*ecs_info.security_group_ids, *(eni_info.security_group_ids if eni_info else [])]
+    ecs_info.security_groups = lookups.security_groups(list(dict.fromkeys(sg_ids)))
+    ecs_info.security_group_ids = [sg.group_id for sg in ecs_info.security_groups]
 
     # AZ不明時は ENI → CIDR一致サブネット → 先頭サブネット → EC2 の順で補完
     if not ecs_info.availability_zone:
@@ -317,20 +344,20 @@ _CONDITION_ORDER = (
     "source-ip",
 )
 
-# 条件の値が入る *Config のキー
-_CONDITION_CONFIG_KEYS = {
-    "host-header": "HostHeaderConfig",
-    "path-pattern": "PathPatternConfig",
-    "http-request-method": "HttpRequestMethodConfig",
-    "http-header": "HttpHeaderConfig",
-    "query-string": "QueryStringConfig",
-    "source-ip": "SourceIpConfig",
-}
 
+def _value_sort_key(value: Any) -> tuple[int, str, str]:
+    """
+    条件の値を並べるキー。文字列は文字の順、query-string の `{"Key": …, "Value": …}` はキー →
+    値の順（キーのないものが先）。それ以外の形の値は最後に、文字列にした順で並べる（比べられない
+    値が来ても、並べ替えで落ちないように）。
 
-def _query_pair_key(pair: dict[str, Any]) -> tuple[str, str]:
-    """query-string の値 `{"Key": …, "Value": …}` を並べるキー（キーのないものが先）。"""
-    return str(pair.get("Key") or ""), str(pair.get("Value") or "")
+    :param value: 条件の値
+    """
+    if isinstance(value, str):
+        return 0, value, ""
+    if isinstance(value, dict):
+        return 1, str(value.get("Key") or ""), str(value.get("Value") or "")
+    return 2, str(value), ""
 
 
 def _sorted_condition(cond: dict[str, Any]) -> dict[str, Any]:
@@ -343,17 +370,12 @@ def _sorted_condition(cond: dict[str, Any]) -> dict[str, Any]:
     """
     result = copy.deepcopy(cond)
     if isinstance(result.get("Values"), list):
-        result["Values"] = sorted(result["Values"])
-    config = result.get(_CONDITION_CONFIG_KEYS.get(result.get("Field", ""), ""))
+        result["Values"] = sorted(result["Values"], key=_value_sort_key)
+    config = result.get(CONDITION_CONFIG_KEYS.get(result.get("Field", ""), ""))
     if isinstance(config, dict):
-        values = config.get("Values")
-        if isinstance(values, list):
-            if result.get("Field") == "query-string":
-                config["Values"] = sorted(values, key=_query_pair_key)
-            else:
-                config["Values"] = sorted(values)
-        if isinstance(config.get("RegexValues"), list):
-            config["RegexValues"] = sorted(config["RegexValues"])
+        for name in ("Values", "RegexValues"):
+            if isinstance(config.get(name), list):
+                config[name] = sorted(config[name], key=_value_sort_key)
     return result
 
 
@@ -380,12 +402,12 @@ def _sorted_conditions(conditions: list[dict[str, Any]]) -> list[dict[str, Any]]
     return sorted((_sorted_condition(cond) for cond in conditions), key=key)
 
 
-# 値のリストだけを持つ条件の表示名と、値が入る *Config のキー
-_VALUE_CONDITIONS = {
-    "host-header": ("Host", "HostHeaderConfig"),
-    "path-pattern": ("Path", "PathPatternConfig"),
-    "http-request-method": ("Method", "HttpRequestMethodConfig"),
-    "source-ip": ("SourceIP", "SourceIpConfig"),
+# 値のリストだけを持つ条件の表示名（値が入る *Config のキーは CONDITION_CONFIG_KEYS）
+_VALUE_CONDITION_LABELS = {
+    "host-header": "Host",
+    "path-pattern": "Path",
+    "http-request-method": "Method",
+    "source-ip": "SourceIP",
 }
 
 
@@ -400,9 +422,10 @@ def _condition_text(cond: dict[str, Any]) -> str:
     """
     field_name = cond.get("Field", "")
     regexes = [f"regex:{r}" for r in _regex_values(cond)]
-    if field_name in _VALUE_CONDITIONS:
-        label, config_key = _VALUE_CONDITIONS[field_name]
-        return f"{label} in [{', '.join([*_values(cond, config_key), *regexes])}]"
+    if field_name in _VALUE_CONDITION_LABELS:
+        label = _VALUE_CONDITION_LABELS[field_name]
+        values = _values(cond, CONDITION_CONFIG_KEYS[field_name])
+        return f"{label} in [{', '.join([*values, *regexes])}]"
     if field_name == "http-header":
         cfg = cond.get("HttpHeaderConfig", {})
         vals = [*cfg.get("Values", []), *regexes]
@@ -411,7 +434,7 @@ def _condition_text(cond: dict[str, Any]) -> str:
         pairs = cond.get("QueryStringConfig", {}).get("Values", [])
         vals = [query_pair_label(q) for q in pairs]
         return f"Query in [{', '.join(vals)}]"
-    return f"{field_name}: {', '.join(cond.get('Values', []))}"
+    return f"{field_name}: {', '.join(str(v) for v in cond.get('Values', []))}"
 
 
 def _tg_ref(
@@ -953,7 +976,10 @@ class ELBHydratorMixin(AWSFetcherMixin):
         """
         lb_arn = lb["LoadBalancerArn"]
         lb_view = self._build_basic_lb_view(lb)
-        lb_view.route53_records = list(batch.route53.get(lb_view.dns_name, []))
+        lb_view.route53_records = sorted(
+            batch.route53.get(lb_view.dns_name, []),
+            key=lambda r: (r.record_name, r.record_type, r.zone_name, r.private_zone, r.zone_id),
+        )
         lb_view.attributes = batch.attributes.get(lb_arn, {})
         if include_network:
             # AZ の順に並べる（AWS は作り直すと別の順で返すことがある）
@@ -969,7 +995,10 @@ class ELBHydratorMixin(AWSFetcherMixin):
             )
 
         tg_arns = dict.fromkeys(raw_tg["TargetGroupArn"] for raw_tg in raw_tgs)
-        lb_view.target_groups = [batch.tg_views[arn] for arn in tg_arns if arn in batch.tg_views]
+        lb_view.target_groups = sorted(
+            (batch.tg_views[arn] for arn in tg_arns if arn in batch.tg_views),
+            key=_tg_sort_key,
+        )
 
         listener_views = [
             self._build_listener_view(raw_l, batch)
@@ -1002,11 +1031,17 @@ class ELBHydratorMixin(AWSFetcherMixin):
             port=raw_l.get("Port", 0),
             protocol=raw_l.get("Protocol", ""),
             ssl_policy=raw_l.get("SslPolicy", ""),
-            certificates=certs,
-            rules=[
-                self._build_rule_view(raw_r, batch.tg_views)
-                for raw_r in batch.rules_by_listener.get(l_arn, [])
-            ],
+            # 既定の証明書を先に、あとはドメイン名の順。ルールは優先度の順（AWS の返す順によらない）
+            certificates=sorted(
+                certs, key=lambda c: (not c.is_default, c.domain_name, c.certificate_arn)
+            ),
+            rules=sorted(
+                (
+                    self._build_rule_view(raw_r, batch.tg_views)
+                    for raw_r in batch.rules_by_listener.get(l_arn, [])
+                ),
+                key=lambda r: r.priority_order,
+            ),
         )
 
     def _hydrate_target_groups(
@@ -1086,7 +1121,7 @@ class ELBHydratorMixin(AWSFetcherMixin):
             tg_views.append(
                 self._build_target_group_view(tg, targets, tg_attrs_map.get(tg_arn, {}))
             )
-        return tg_views
+        return sorted(tg_views, key=_tg_sort_key)
 
     def _resolve_target_resources(
         self,
@@ -1350,15 +1385,20 @@ class ELBHydratorMixin(AWSFetcherMixin):
 
         # 各リソースモデルへ SubnetInfo / SecurityGroupInfo を付与
         subnets = lookups.subnet_info_map
+        # SG と サブネットは、AWS が返す順によらない順にする（ID の一覧も同じ順にそろえる）
         for inst in lookups.ec2_by_id.values():
             inst.subnet = subnets.get(inst.subnet_id)
             inst.security_groups = lookups.security_groups(inst.security_group_ids)
+            inst.security_group_ids = [sg.group_id for sg in inst.security_groups]
         for eni in lookups.eni_by_ip.values():
             eni.subnet = subnets.get(eni.subnet_id)
             eni.security_groups = lookups.security_groups(eni.security_group_ids)
+            eni.security_group_ids = [sg.group_id for sg in eni.security_groups]
         for fn_item in lookups.lambda_map.values():
+            fn_item.subnet_ids = _ordered_subnet_ids(fn_item.subnet_ids, subnets)
             fn_item.subnets = [subnets[s] for s in fn_item.subnet_ids if s in subnets]
             fn_item.security_groups = lookups.security_groups(fn_item.security_group_ids)
+            fn_item.security_group_ids = [sg.group_id for sg in fn_item.security_groups]
 
     @staticmethod
     def _build_target_group_view(
@@ -1389,7 +1429,7 @@ class ELBHydratorMixin(AWSFetcherMixin):
             unhealthy_threshold_count=tg.get("UnhealthyThresholdCount", 2),
             matcher=matcher.get("HttpCode") or matcher.get("GrpcCode") or "",
             ip_address_type=tg.get("IpAddressType", "ipv4"),
-            load_balancer_arns=tg.get("LoadBalancerArns", []),
+            load_balancer_arns=sorted(tg.get("LoadBalancerArns", [])),
             targets=targets,
             attributes=attributes,
         )
@@ -1505,7 +1545,10 @@ class ELBHydratorMixin(AWSFetcherMixin):
         conditions = [_condition_text(cond) for cond in condition_specs]
         actions_summary: list[str] = []
         tg_refs: list[RuleTargetGroupRef] = []
+        redirect_config: dict[str, Any] | None = None
         for act in sorted(raw_rule.get("Actions", []), key=lambda a: a.get("Order", 1)):
+            if act.get("Type") == "redirect" and redirect_config is None:
+                redirect_config = dict(act.get("RedirectConfig", {}))
             summary, refs = _summarize_action(act, tg_view_map)
             if summary:
                 actions_summary.append(summary)
@@ -1519,6 +1562,7 @@ class ELBHydratorMixin(AWSFetcherMixin):
             actions_summary=actions_summary,
             target_group_refs=tg_refs,
             condition_specs=condition_specs,
+            redirect_config=redirect_config,
         )
 
     @staticmethod
