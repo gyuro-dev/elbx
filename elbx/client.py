@@ -32,6 +32,7 @@ from .fetchers import (
     _decode_route53_name,
     _normalize_dns_name,
     error_code,
+    lb_sort_key,
     logger,
     tolerate_aws_errors,
 )
@@ -420,6 +421,8 @@ class ELBClient(ELBHydratorMixin):
                     t("client.lb_not_found_detail", name=", ".join(names), error=exc)
                 ) from exc
             raise
+        # 名前の順に並べる（`names` を指定したときも、AWS が返す順や指定の順によらない）
+        raw_lbs = sorted(raw_lbs, key=lb_sort_key)
         if search:
             keyword = search.lower()
             raw_lbs = [
@@ -671,6 +674,18 @@ class ELBClient(ELBHydratorMixin):
                             target=target,
                         )
                     )
+        # ELB → TG → ターゲットの順に並べる（AWS が返す順によらない）
+        results.sort(
+            key=lambda r: (
+                r.load_balancer_name,
+                r.load_balancer_arn,
+                r.target_group_name,
+                r.target_group_arn,
+                r.target.display_name,
+                r.target.target_id,
+                r.target.port,
+            )
+        )
         return results
 
     @staticmethod

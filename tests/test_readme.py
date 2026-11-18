@@ -91,16 +91,20 @@ def _examples(lang: str) -> list[Example]:
         summary = re.search(r"<summary>[^<]*<code>(elbx [^<]+)</code>", lines[i])
         if summary:
             pending = html.unescape(summary.group(1))
-        if lines[i].strip() == "```text":
+        fence = re.match(r"^\s*```(\w*)\s*$", lines[i])
+        if fence:
             start = i + 1
-            end = next(j for j in range(start, len(lines)) if lines[j].strip() == "```")
-            block = lines[start:end]
-            command = pending
-            if block and block[0].startswith("$ elbx "):
-                command, block = block[0][2:], block[1:]
-            if command:
-                examples.append(Example(lang, start + 1, command, block))
-            pending = None
+            end = next((j for j in range(start, len(lines)) if lines[j].strip() == "```"), None)
+            if end is None:
+                raise AssertionError(f"{READMES[lang].name}:{i + 1}: ``` のブロックが閉じていない")
+            # `<summary>` のコマンドは直後のブロックだけに使う（text 以外のブロックでも捨てる）
+            command, pending = pending, None
+            if fence.group(1) == "text":
+                block = lines[start:end]
+                if block and block[0].startswith("$ elbx "):
+                    command, block = block[0][2:], block[1:]
+                if command:
+                    examples.append(Example(lang, start + 1, command, block))
             i = end
         i += 1
     return examples

@@ -13,6 +13,7 @@ import errno
 import logging
 import os
 import re
+import shlex
 import sys
 import textwrap
 from collections.abc import Callable, Iterator, Sequence
@@ -36,7 +37,7 @@ from .formatter import (
 )
 from .messages import LANGUAGES, MESSAGES, get_language, t, using_language
 from .models import RouteHop, TargetGroupView, _dumps_json
-from .simulator import has_url_scheme, mask_userinfo
+from .simulator import SimulatedRequest, has_url_scheme, mask_userinfo, redirect_url
 
 # =============================================================================
 # 引数の型
@@ -688,33 +689,62 @@ def _run_route(elb: ELBClient, args: argparse.Namespace, use_color: bool | None)
         _print_json(result.to_dict())
         return
     print(format_route_simulation(result, use_color=use_color))
-    # スキームを省くと http:// になり、ポート 80 が HTTPS へのリダイレクトだとそこで終わるので、
-    # https:// で試すように伝える（http:// を確かめたいこともあるので、続けて評価はしない）
-    if not has_url_scheme(args.url) and _redirects_to_https(result.entries):
-        url = mask_userinfo(f"https://{args.url}")
-        print(
-            t("cli.hint", hint=_escape_controls(t("cli.hint.redirect_to_https", url=url))),
-            file=sys.stderr,
+    # スキームを省くと http:// になり、HTTPS へのリダイレクトだとそこで終わるので、リダイレクト先を
+    # 評価するコマンドを伝える（http:// を確かめたいこともあるので、続けて評価はしない）
+    if not has_url_scheme(args.url):
+        req = SimulatedRequest.from_url(
+            args.url, method=args.method, headers=headers, source_ip=args.source_ip
         )
+        target = _https_redirect_target(result.entries, req)
+        if target is not None:
+            _print_redirect_hint(target, args)
 
 
-# リダイレクトの要約（`Redirect (HTTP_301) -> HTTPS://…`）が HTTPS へ向くか
-_REDIRECT_TO_HTTPS = re.compile(r"^Redirect \([^)]*\) -> https://", re.IGNORECASE)
-
-
-def _redirects_to_https(hops: Sequence[RouteHop]) -> bool:
+def _https_redirect_target(hops: Sequence[RouteHop], req: SimulatedRequest) -> str | None:
     """
-    一致したルールが HTTPS へのリダイレクトだった段があるかを返す（下流の段も見る）。
+    一致したルールが HTTPS へリダイレクトする最初の段の、リダイレクト先の URL を返す（下流の段も
+    見る）。リダイレクト先は、ルールの `RedirectConfig`（ホスト・ポート・パスなど）から組み立てる。
 
     :param hops: `route` の評価の段
+    :param req: 評価したリクエスト
+    :return: HTTPS のリダイレクト先（なければ None）
     """
     for hop in hops:
         rule = hop.matched_rule
-        if rule is not None and any(_REDIRECT_TO_HTTPS.match(a) for a in rule.actions_summary):
-            return True
-        if _redirects_to_https(hop.downstream):
-            return True
-    return False
+        if rule is not None and rule.redirect_config is not None:
+            url = redirect_url(rule.redirect_config, req, hop.port)
+            if url.startswith("https://"):
+                return url
+        found = _https_redirect_target(hop.downstream, req)
+        if found is not None:
+            return found
+    return None
+
+
+def _print_redirect_hint(url: str, args: argparse.Namespace) -> None:
+    """
+    リダイレクト先を評価するコマンドを、ヒントとして標準エラー出力に出す。ほかのオプション
+    （-X・-H・--source-ip・--lb・--profile・--region）を指定していれば、同じものを付けるように
+    添える（ヘッダーの値には認証の情報が入りうるので、ヒントに書き写さない）。
+
+    :param url: リダイレクト先の URL
+    :param args: `route` の引数
+    """
+    command = shlex.join(["elbx", "route", mask_userinfo(url)])
+    has_options = any(
+        (
+            args.method.upper() != "GET",
+            args.header,
+            args.source_ip,
+            args.lb,
+            args.profile,
+            args.region,
+        )
+    )
+    if has_options:
+        command += t("cli.hint.same_options")
+    hint = t("cli.hint.redirect_to_https", command=command)
+    print(t("cli.hint", hint=_escape_controls(hint)), file=sys.stderr)
 
 
 _COMMANDS: dict[str, Callable[[ELBClient, argparse.Namespace, bool | None], None]] = {

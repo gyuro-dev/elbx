@@ -868,7 +868,7 @@ classDiagram
 | `LoadBalancerView` | `arn`, `name`, `dns_name`, `type`, `scheme`, `state`, `vpc_id`, `ip_address_type`（`ipv4` / `dualstack` など）, `attributes`, `route53_records`, `subnets`, `security_groups`, `listeners`, `target_groups`, `all_targets` |
 | `Route53RecordInfo` | `zone_id`, `zone_name`, `record_name`, `record_type`, `is_alias`, `private_zone`, `ttl`, `evaluate_target_health` |
 | `ListenerView` | `port`, `protocol`, `ssl_policy`, `certificates`, `rules` |
-| `RuleView` | `priority`（`"default"` を含む）, `is_default`, `conditions`, `condition_text`, `condition_specs`, `actions_summary`, `target_group_refs` |
+| `RuleView` | `priority`（`"default"` を含む）, `is_default`, `conditions`, `condition_text`, `condition_specs`, `actions_summary`, `target_group_refs`, `redirect_config` |
 | `RuleTargetGroupRef` | `target_group_arn`, `target_group_name`, `weight`, `target_group` |
 | `TargetGroupView` | `name`, `protocol`, `port`, `target_type`, `ip_address_type`（`ipv4` / `ipv6`）, ヘルスチェック設定, `attributes`, `targets`, `healthy_count` / `unhealthy_count` / `draining_count` / `health_summary`, `needs_attention(target)` / `attention_count`（`--unhealthy` が出すターゲット） |
 | `TargetView` | `target_id`, `port`, `health_state`, `health_reason`, `health_description`, `availability_zone`, `ec2` / `ecs` / `lambda_function` / `eni` / `downstream_lb`（ターゲットの先にある ELB。ALB も NLB もある）, `ip_subnet`（IP をサブネットの CIDR と照合して特定したサブネット）, 共通プロパティ `target_kind`（Literal 型 `TargetKind`）, `display_name`, `ip_address`, `subnet`, `subnets`, `security_groups` |

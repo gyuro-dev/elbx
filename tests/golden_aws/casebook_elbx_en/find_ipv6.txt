@@ -4,6 +4,6 @@
 # state: default
 # exit_code: 0
 ----- stdout -----
-LOAD BALANCER     TARGET GROUP   KIND  TARGET ID               RESOURCE / NAME  PRIVATE IP              PORT  ELB HEALTH  STATE
-----------------  -------------  ----  ----------------------  ---------------  ----------------------  ----  ----------  -------
+LOAD BALANCER     TARGET GROUP   KIND  TARGET ID                RESOURCE / NAME  PRIVATE IP               PORT  ELB HEALTH  STATE
+----------------  -------------  ----  -----------------------  ---------------  -----------------------  ----  ----------  -------
 v6-dualstack-alb  prod-v6-ip-tg  ec2   <ipv6:public_1a>::31  v6-web-01        <ipv6:public_1a>::31  8080  healthy     running

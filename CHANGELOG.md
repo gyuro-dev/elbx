@@ -7,6 +7,30 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- `RuleView.redirect_config`: the `RedirectConfig` of the rule's redirect action, as
+  `describe_rules` returns it (None for a rule that does not redirect; also in `--json`).
+
+### Fixed
+
+- The hint of `elbx route` without a scheme is built from the redirect itself: its host, port,
+  path and query. A redirect to port 8443 or to another host gave a command for port 443 of the
+  same host, and a port written in the URL (`api.example.com:80/x`) was kept, so the command
+  went back to the same listener. When other options are given (`-X`, `-H`, `--source-ip`,
+  `--lb`, `--profile`, `--region`), the hint says to give the same ones; header values are not
+  copied into it.
+- More of the output no longer depends on the order in which AWS returns things: the rules of
+  a listener (by priority; elbx relied on AWS's order), the certificates of a listener (the
+  default first, then by domain name), the alternative names of a certificate, the Route 53
+  records of a load balancer, the target groups (`targets`, `find`,
+  `LoadBalancerView.target_groups`, `ELBClient.list_target_groups()`), the load balancer ARNs
+  of a target group, the results of `find`, the attributes (the key order in `--json`), and the
+  subnets and security groups of the targets (`subnet_ids` and `security_group_ids` follow the
+  order of `subnets` and `security_groups`). `ELBClient.list_load_balancers(names=...)` is
+  sorted by name too.
+- Sorting the conditions of a rule no longer fails on a value it cannot compare.
+
 ## [0.2.0] - 2026-11-17
 
 ### Added

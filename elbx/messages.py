@@ -316,9 +316,10 @@ MESSAGES: dict[str, dict[str, str]] = {
             "or search by name."
         ),
         "cli.hint.redirect_to_https": (
-            "without a scheme the URL is read as http:// (port 80), which is redirected to "
-            "HTTPS. To follow the HTTPS request: elbx route {url}"
+            "without a scheme the URL is read as http://, and the request is redirected to "
+            "HTTPS. To follow the HTTPS request: {command}"
         ),
+        "cli.hint.same_options": " (with the same options)",
         "cli.hint.credentials": (
             "set up credentials (aws configure, environment variables) or choose a profile "
             "with --profile."
@@ -569,9 +570,10 @@ MESSAGES: dict[str, dict[str, str]] = {
             "名前で検索してください。"
         ),
         "cli.hint.redirect_to_https": (
-            "スキームのない URL は http://（ポート 80）として評価しました。HTTPS へ"
-            "リダイレクトされるので、その先は elbx route {url} で確かめられます。"
+            "スキームのない URL は http:// として評価しました。HTTPS へリダイレクトされるので、"
+            "その先は {command} で確かめられます。"
         ),
+        "cli.hint.same_options": "（ほかのオプションも同じものを付けて）",
         "cli.hint.credentials": (
             "認証情報を設定する（aws configure、環境変数）か、--profile でプロファイルを"
             "指定してください。"

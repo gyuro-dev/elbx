@@ -13,4 +13,4 @@ GET http://api.elbx-test.internal/anything
       どのルールにも一致しなかったため default を適用
   => Redirect (HTTP_301) -> HTTPS://#{host}:443/#{path}
 ----- stderr -----
-ヒント: スキームのない URL は http://（ポート 80）として評価しました。HTTPS へリダイレクトされるので、その先は elbx route https://api.elbx-test.internal/anything で確かめられます。
+ヒント: スキームのない URL は http:// として評価しました。HTTPS へリダイレクトされるので、その先は elbx route https://api.elbx-test.internal/anything で確かめられます。
