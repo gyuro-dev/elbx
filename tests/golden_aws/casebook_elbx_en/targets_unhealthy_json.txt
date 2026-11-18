@@ -25,20 +25,20 @@
       "<lb-arn:web_alb>"
     ],
     "attributes": {
-      "target_group_health.unhealthy_state_routing.minimum_healthy_targets.percentage": "off",
       "deregistration_delay.timeout_seconds": "300",
-      "stickiness.type": "lb_cookie",
-      "stickiness.lb_cookie.duration_seconds": "86400",
-      "slow_start.duration_seconds": "0",
-      "stickiness.app_cookie.duration_seconds": "86400",
+      "load_balancing.algorithm.anomaly_mitigation": "off",
       "load_balancing.algorithm.type": "round_robin",
       "load_balancing.cross_zone.enabled": "use_load_balancer_configuration",
+      "slow_start.duration_seconds": "0",
+      "stickiness.app_cookie.cookie_name": "",
+      "stickiness.app_cookie.duration_seconds": "86400",
+      "stickiness.enabled": "false",
+      "stickiness.lb_cookie.duration_seconds": "86400",
+      "stickiness.type": "lb_cookie",
+      "target_group_health.dns_failover.minimum_healthy_targets.count": "1",
       "target_group_health.dns_failover.minimum_healthy_targets.percentage": "off",
       "target_group_health.unhealthy_state_routing.minimum_healthy_targets.count": "1",
-      "stickiness.enabled": "false",
-      "target_group_health.dns_failover.minimum_healthy_targets.count": "1",
-      "stickiness.app_cookie.cookie_name": "",
-      "load_balancing.algorithm.anomaly_mitigation": "off"
+      "target_group_health.unhealthy_state_routing.minimum_healthy_targets.percentage": "off"
     },
     "targets": [
       {
@@ -418,20 +418,20 @@
       "<lb-arn:web_alb>"
     ],
     "attributes": {
-      "target_group_health.unhealthy_state_routing.minimum_healthy_targets.percentage": "off",
       "deregistration_delay.timeout_seconds": "300",
-      "stickiness.type": "lb_cookie",
-      "stickiness.lb_cookie.duration_seconds": "86400",
-      "slow_start.duration_seconds": "0",
-      "stickiness.app_cookie.duration_seconds": "86400",
+      "load_balancing.algorithm.anomaly_mitigation": "off",
       "load_balancing.algorithm.type": "round_robin",
       "load_balancing.cross_zone.enabled": "use_load_balancer_configuration",
+      "slow_start.duration_seconds": "0",
+      "stickiness.app_cookie.cookie_name": "",
+      "stickiness.app_cookie.duration_seconds": "86400",
+      "stickiness.enabled": "false",
+      "stickiness.lb_cookie.duration_seconds": "86400",
+      "stickiness.type": "lb_cookie",
+      "target_group_health.dns_failover.minimum_healthy_targets.count": "1",
       "target_group_health.dns_failover.minimum_healthy_targets.percentage": "off",
       "target_group_health.unhealthy_state_routing.minimum_healthy_targets.count": "1",
-      "stickiness.enabled": "false",
-      "target_group_health.dns_failover.minimum_healthy_targets.count": "1",
-      "stickiness.app_cookie.cookie_name": "",
-      "load_balancing.algorithm.anomaly_mitigation": "off"
+      "target_group_health.unhealthy_state_routing.minimum_healthy_targets.percentage": "off"
     },
     "targets": [
       {
