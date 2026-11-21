@@ -7,6 +7,8 @@ incompatible change raises the minor version).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
 ### Added
 
 - `RuleView.redirect_config`: the `RedirectConfig` of the rule's redirect action, as
@@ -246,7 +248,8 @@ incompatible change raises the minor version).
   literal; `repr()` of a load balancer, a target group, a target or a hop is one short line. The
   README examples pass `mypy --strict` as written.
 
-[Unreleased]: https://github.com/gyuro-dev/elbx/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gyuro-dev/elbx/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gyuro-dev/elbx/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gyuro-dev/elbx/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/gyuro-dev/elbx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gyuro-dev/elbx/releases/tag/v0.1.0
