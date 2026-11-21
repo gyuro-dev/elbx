@@ -59,7 +59,7 @@ from .models import (
     TargetView,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # ログの出し方は利用する側が決める（何も設定しなければ何も出さない）
 logging.getLogger("elbx").addHandler(logging.NullHandler())
