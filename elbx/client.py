@@ -68,14 +68,20 @@ _MAX_ATTEMPTS = 10
 # 新しくできたリージョンを古い botocore で使うこともあるので、弾かずに回数だけ減らす
 _MAX_ATTEMPTS_UNKNOWN_REGION = 2
 
+# botocore の、1 つのクライアントの接続の数の既定
+_DEFAULT_MAX_POOL_CONNECTIONS = 10
 
-def _retry_config(region_known: bool = True) -> Config:
+
+def _client_config(region_known: bool = True, max_workers: int = 10) -> Config:
     """
-    AWS のクライアントに付けるリトライの設定を返す。
+    AWS のクライアントに付ける設定（リトライと接続の数）を返す。
     利用者が環境変数（`AWS_RETRY_MODE` / `AWS_MAX_ATTEMPTS`）で決めた項目は、そのままにする。
 
     :param region_known: リージョン名を botocore が知っているか
+    :param max_workers: 同時に呼ぶ数の上限。botocore の接続の数の既定（10）より多いと、
+        余った接続を捨てて、次の呼び出しで接続し直すことになるので、その数まで増やす
     """
+    pool = max(_DEFAULT_MAX_POOL_CONNECTIONS, max_workers)
     retries: dict[str, Any] = {}
     if not os.environ.get("AWS_RETRY_MODE"):
         retries["mode"] = _RETRY_MODE
@@ -83,7 +89,7 @@ def _retry_config(region_known: bool = True) -> Config:
         retries["total_max_attempts"] = (
             _MAX_ATTEMPTS if region_known else _MAX_ATTEMPTS_UNKNOWN_REGION
         )
-    return Config(retries=retries) if retries else Config()
+    return Config(max_pool_connections=pool, **({"retries": retries} if retries else {}))
 
 
 def _is_known_region(session: Any, region: str | None) -> bool:
@@ -317,11 +323,13 @@ class ELBClient(ELBHydratorMixin):
         :param service_name: Boto3サービス名
         :return: 生成されたBoto3クライアント
         """
-        kwargs: dict[str, Any] = {"config": _retry_config(self._region_known)}
+        kwargs: dict[str, Any] = {"config": _client_config(self._region_known, self.max_workers)}
         if self.region_name:
             kwargs["region_name"] = self.region_name
         client = self.session.client(service_name, **kwargs)
-        client.meta.events.register("before-call", self._on_api_call_start)
+        # 枠を取るのは before-call の最後にする（あとのハンドラーが失敗すると after-call も
+        # after-call-error も来ないので、取った枠が返らない）
+        client.meta.events.register_last("before-call", self._on_api_call_start)
         client.meta.events.register("after-call", self._on_api_call_end)
         client.meta.events.register("after-call-error", self._on_api_call_error)
         return client
@@ -869,7 +877,7 @@ class ELBClient(ELBHydratorMixin):
 
         # 読めなかったのに「向いている ELB がない」と答えないよう、ここでは失敗を隠さない。
         # 読むのは、このホスト名のレコードを持ちうるゾーンだけ
-        zone_results = self._fetch_route53_zones_for_host(host_norm)
+        zone_results, failures = self._fetch_route53_zones_for_host(host_norm)
         r53_map = self._fetch_route53_records_by_dns(
             [lb.get("DNSName", "") for lb in raw_lbs if lb.get("DNSName")], zone_results
         )
@@ -896,7 +904,6 @@ class ELBClient(ELBHydratorMixin):
         found = exact or wildcard
         # 読めなかったゾーンにレコードがあるかもしれないので、見つからないときは
         # 「ない」と答えずに、読めなかったことを伝える
-        failures = self._route53_zone_failures
         if not found and failures:
             raise next(iter(failures.values()))
         return found

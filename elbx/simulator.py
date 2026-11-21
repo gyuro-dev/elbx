@@ -273,11 +273,16 @@ def redirect_url(config: dict[str, Any], req: SimulatedRequest, port: int) -> st
     }
 
     def expand(name: str, default: str) -> str:
-        text = str(config.get(name) or default)
+        # 空の Query は、クエリを付けないリダイレクト（省いたときとは違う）
+        value = config.get(name)
+        text = default if value is None else str(value)
         return _REDIRECT_TOKEN.sub(lambda m: values[m.group(1)], text)
 
     scheme = expand("Protocol", "#{protocol}").lower()
     host = expand("Host", "#{host}")
+    # IPv6 のアドレスは、URL では角括弧で囲む（`req.host` は囲みを外したもの）
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     target_port = expand("Port", "#{port}")
     path = expand("Path", "/#{path}")
     query = expand("Query", "#{query}")

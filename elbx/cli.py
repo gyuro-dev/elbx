@@ -913,6 +913,7 @@ def _run(argv: Sequence[str] | None, client: ELBClient | None) -> int:
             _with_default_command(parser, list(sys.argv[1:] if argv is None else argv))
         )
         _reject_search_with_single_target(parser, args)
+        _reject_color_with_no_color(parser, args)
     with _cli_logging(args.verbose) as warnings:
         return _execute(args, client, warnings)
 
@@ -934,6 +935,21 @@ def _reject_search_with_single_target(
     option, value = single.get(args.command, ("", None))
     if value is not None and getattr(args, "search", None) is not None:
         _subcommands(parser)[args.command].error(t("cli.arg.search_with_single", option=option))
+
+
+def _reject_color_with_no_color(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """
+    `--color` と `--no-color` を、サブコマンドの前と後ろに分けて書いたらエラーにする。
+    argparse の排他のグループはパーサーごとなので、分けて書くと両方が通ってしまう。
+
+    :param parser: `build_parser()` のパーサー
+    :param args: 読んだ引数
+    """
+    if args.color and args.no_color:
+        message = t("cli.argparse.not_allowed_with") % "--color"
+        _subcommands(parser)[args.command].error(
+            t("cli.argparse.argument") % {"argument_name": "--no-color", "message": message}
+        )
 
 
 def _next_step_hint(cause: BaseException | None, profile: str | None) -> str | None:

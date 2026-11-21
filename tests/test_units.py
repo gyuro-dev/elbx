@@ -18,6 +18,8 @@ import pytest
 from botocore.exceptions import ClientError
 
 from elbx import (
+    CertificateInfo,
+    EC2InstanceInfo,
     ECSTaskInfo,
     ELBClient,
     ELBError,
@@ -2101,22 +2103,32 @@ def test_ecs_tasks_are_read_from_every_cluster_for_ip_targets(elb_client: ELBCli
     assert sorted(tasks_read) == ["a", "b"]
 
 
-def test_ecs_clusters_are_merged_in_order_when_read_in_parallel(elb_client: ELBClient) -> None:
-    """並列に読んでも、結果はクラスターの順に足す（同じ TG を指すサービスは後のものが残る）。"""
+@pytest.mark.parametrize("reverse", [False, True], ids=["in_order", "reversed"])
+def test_service_of_a_shared_target_group_does_not_depend_on_the_order(
+    elb_client: ELBClient, reverse: bool
+) -> None:
+    """
+    同じ TG を指すサービスが複数のクラスターにあっても、並列に読んでも、AWS が返す順によらず
+    同じサービスを選ぶ（ACTIVE のものを先に、そのあとはクラスターの ARN の順）。
+    """
     tg_arn = "tg-shared"
+    clusters = [f"{ARN_P}:cluster/{n}" for n in range(8)]
 
     class _StubECS:
         list_clusters = staticmethod(
-            lambda **_: {"clusterArns": [f"{ARN_P}:cluster/{n}" for n in range(8)]}
+            lambda **_: {"clusterArns": clusters[::-1] if reverse else clusters}
         )
         list_services = staticmethod(lambda **_: {"serviceArns": ["svc"]})
 
         @staticmethod
         def describe_services(cluster: str, services: list[str]) -> dict[str, Any]:
+            n = cluster.rsplit("/", 1)[-1]
             return {
                 "services": [
                     {
-                        "serviceName": f"svc-{cluster.rsplit('/', 1)[-1]}",
+                        "serviceName": f"svc-{n}",
+                        # cluster/0 のサービスは削除中なので、選ばない
+                        "status": "DRAINING" if n == "0" else "ACTIVE",
                         "loadBalancers": [{"targetGroupArn": tg_arn}],
                     }
                 ]
@@ -2124,7 +2136,7 @@ def test_ecs_clusters_are_merged_in_order_when_read_in_parallel(elb_client: ELBC
 
     elb_client.ecs = _StubECS()
     maps = elb_client._fetch_ecs_maps(set(), set(), {tg_arn})
-    assert maps.by_tg_arn[tg_arn].service_name == "svc-7"
+    assert maps.by_tg_arn[tg_arn].service_name == "svc-1"
 
 
 def test_ip_of_a_load_balancer_node_is_not_matched_with_ecs_tasks() -> None:
@@ -2530,8 +2542,9 @@ def test_api_calls_at_once_never_exceed_max_workers(moto_env: TestEnv) -> None:
         with lock:
             running -= 1
 
+    # elbx が枠を取るのは before-call の最後なので、そのあとで数える
     for service in (client.elbv2, client.ec2, client.acm, client.ecs, client.lambda_client):
-        service.meta.events.register("before-call", started)
+        service.meta.events.register_last("before-call", started)
         service.meta.events.register("after-call", ended)
     assert client.list_load_balancers()
     assert 1 <= most <= 2
@@ -3065,6 +3078,26 @@ def _request(url: str) -> SimulatedRequest:
             8080,
             "http://other.example.com:8080/x",
         ),
+        # 空の Query はクエリを外す（省いたときはそのまま付ける）
+        (
+            {"Protocol": "HTTPS", "Port": "443", "Query": ""},
+            "api.example.com/x?secret=1",
+            80,
+            "https://api.example.com/x",
+        ),
+        # IPv6 のアドレスは角括弧で囲む
+        (
+            {"Protocol": "HTTPS", "Port": "443"},
+            "http://[2001:db8::1]/v1",
+            80,
+            "https://[2001:db8::1]/v1",
+        ),
+        (
+            {"Protocol": "HTTPS", "Port": "8443"},
+            "http://[2001:db8::1]/v1",
+            80,
+            "https://[2001:db8::1]:8443/v1",
+        ),
     ],
 )
 def test_redirect_url_follows_the_redirect_config(
@@ -3099,6 +3132,163 @@ def test_rule_view_keeps_the_redirect_config(elb_client: ELBClient) -> None:
         if rule.redirect_config is None
         for a in rule.actions_summary
     )
+
+
+def test_rule_view_to_dict_has_the_redirect_config() -> None:
+    """`--json` のルールにも `redirect_config` が入る（リダイレクトしないルールは None）。"""
+    config = {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}
+    rule = RuleView(arn="", priority="default", is_default=True, redirect_config=config)
+    assert rule.to_dict()["redirect_config"] == config
+    assert RuleView(arn="", priority="1", is_default=False).to_dict()["redirect_config"] is None
+
+
+def test_network_of_an_ip_target_comes_from_its_eni_rather_than_its_instance() -> None:
+    """
+    EC2 にアタッチされたセカンダリの ENI や、awsvpc の ECS on EC2 のタスクの ENI の IP の
+    ターゲットは、EC2（プライマリの ENI）ではなく、その ENI やタスクのサブネットと SG を出す。
+    """
+    host_subnet = SubnetInfo("subnet-host", "ap-northeast-1a")
+    eni_subnet = SubnetInfo("subnet-eni", "ap-northeast-1a")
+    host_sg = SecurityGroupInfo("sg-host")
+    eni_sg = SecurityGroupInfo("sg-eni")
+    task_sg = SecurityGroupInfo("sg-task")
+    ec2 = EC2InstanceInfo("i-host", subnet=host_subnet, security_groups=[host_sg])
+    eni = ENIInfo("eni-1", "10.0.1.5", subnet=eni_subnet, security_groups=[eni_sg])
+
+    secondary = TargetView(target_id="10.0.1.5", port=80, health_state="healthy", ec2=ec2, eni=eni)
+    assert secondary.subnets == [eni_subnet]
+    assert secondary.security_groups == [eni_sg]
+
+    ecs = ECSTaskInfo("cluster", subnets=[eni_subnet], security_groups=[task_sg, eni_sg])
+    task = TargetView(
+        target_id="10.0.1.5", port=80, health_state="healthy", ec2=ec2, eni=eni, ecs=ecs
+    )
+    assert task.subnets == [eni_subnet]
+    assert task.security_groups == [task_sg, eni_sg]
+
+    # bridge モードの ECS（ECS にはサブネットも SG もない）の instance ターゲットは EC2 のもの
+    bridge = TargetView(
+        target_id="i-host", port=32768, health_state="healthy", ec2=ec2, ecs=ECSTaskInfo("c")
+    )
+    assert bridge.subnets == [host_subnet]
+    assert bridge.security_groups == [host_sg]
+
+
+def _route_to_downstream(health_state: str, health_reason: str = "") -> str:
+    """NLB の TG のターゲットが ALB である `route` の結果を、色なしで描画する。"""
+    alb = LoadBalancerView(
+        arn="arn:alb",
+        name="web-alb",
+        dns_name="",
+        type="application",
+        scheme="",
+        state="",
+        vpc_id="",
+    )
+    nlb = LoadBalancerView(
+        arn="arn:nlb",
+        name="edge-nlb",
+        dns_name="",
+        type="network",
+        scheme="",
+        state="",
+        vpc_id="",
+    )
+    target = TargetView(
+        target_id="arn:alb",
+        port=80,
+        health_state=health_state,
+        health_reason=health_reason,
+        downstream_lb=alb,
+    )
+    tg = TargetGroupView(
+        arn="arn:tg",
+        name="to-alb",
+        protocol="TCP",
+        port=80,
+        target_type="alb",
+        load_balancer_arns=["arn:nlb"],
+        targets=[target],
+    )
+    rule = RuleView(
+        arn="",
+        priority="default",
+        is_default=True,
+        actions_summary=["Forward -> to-alb"],
+        target_group_refs=[RuleTargetGroupRef("arn:tg", "to-alb", target_group=tg)],
+    )
+    hop = RouteHop(
+        load_balancer=nlb,
+        port=80,
+        matched_rule=rule,
+        downstream=[RouteHop(load_balancer=alb, port=80)],
+    )
+    result = RouteSimulationResult(
+        url="http://edge.example.com/",
+        method="GET",
+        host="edge.example.com",
+        port=80,
+        path="/",
+        entries=[hop],
+    )
+    return format_route_simulation(result, use_color=False)
+
+
+def test_route_shows_an_unhealthy_downstream_load_balancer() -> None:
+    """
+    下流の ELB は「転送先」で展開するが、上流の TG のヘルスチェックに通っていなければ、その
+    状態と理由も TG の下に出す（healthy なら出さない）。
+    """
+    unhealthy = _route_to_downstream("unhealthy", "Target.Timeout")
+    assert "web-alb port=80 (Target.Timeout)" in unhealthy
+    assert "web-alb port=80" not in _route_to_downstream("healthy")
+
+
+def test_tree_labels_an_iam_server_certificate() -> None:
+    """IAM のサーバー証明書は `IAM Cert:`、ACM の証明書は `ACM Cert:` と出す。"""
+    listener = ListenerView(
+        arn="arn:l",
+        port=443,
+        protocol="HTTPS",
+        certificates=[
+            CertificateInfo("arn:aws:acm:ap-northeast-1:123456789012:certificate/abc"),
+            CertificateInfo("arn:aws:iam::123456789012:server-certificate/legacy-cert"),
+        ],
+    )
+    lb = LoadBalancerView(
+        arn="arn:lb",
+        name="lb",
+        dns_name="",
+        type="application",
+        scheme="",
+        state="",
+        vpc_id="",
+        listeners=[listener],
+    )
+    text = format_lb_tree(lb, use_color=False)
+    assert "ACM Cert: abc (abc)" in text
+    assert "IAM Cert: legacy-cert (legacy-cert)" in text
+
+
+def test_tree_draws_the_rules_in_priority_order() -> None:
+    """`format_lb_tree` も、`format_lb_map` と同じくルールを優先度の順に描く（default は最後）。"""
+    rules = [
+        RuleView(arn="", priority="default", is_default=True),
+        RuleView(arn="", priority="20", is_default=False, conditions=["Path in [/b]"]),
+        RuleView(arn="", priority="3", is_default=False, conditions=["Path in [/a]"]),
+    ]
+    lb = LoadBalancerView(
+        arn="arn:lb",
+        name="lb",
+        dns_name="",
+        type="application",
+        scheme="",
+        state="",
+        vpc_id="",
+        listeners=[ListenerView(arn="arn:l", port=80, protocol="HTTP", rules=rules)],
+    )
+    text = format_lb_tree(lb, use_color=False)
+    assert text.index("[priority:3]") < text.index("[priority:20]") < text.index("[default]")
 
 
 @pytest.mark.parametrize(

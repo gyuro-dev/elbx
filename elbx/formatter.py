@@ -18,6 +18,7 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from typing import TypeVar
 
+from ._ids import is_arn_of
 from .messages import t as tr
 from .models import (
     EC2InstanceInfo,
@@ -679,12 +680,14 @@ def _append_listener_lines(
         exp_str = f", expires={cert.not_after[:10]}" if cert.not_after else ""
         status_str = f", status={cert.status}" if cert.status else ""
         cert_id = cert.certificate_arn.split("/")[-1]
+        # IAM のサーバー証明書もリスナーに付けられる（ACM では引けないので、名前だけが出る）
+        cert_label = "IAM Cert:" if is_arn_of(cert.certificate_arn, "iam") else "ACM Cert:"
         lines.append(
-            f"{cert_branch}{c.wrap('ACM Cert:', c.CYAN)} {domain_str} "
+            f"{cert_branch}{c.wrap(cert_label, c.CYAN)} {domain_str} "
             f"({cert_id}{status_str}{exp_str})"
         )
 
-    for rule, r_last in _with_last(listener.rules):
+    for rule, r_last in _with_last(sorted(listener.rules, key=lambda r: r.priority_order)):
         r_branch, r_child = _tree_prefixes(l_child, r_last)
         prio_label = "[default]" if rule.is_default else f"[priority:{rule.priority}]"
         prio_colored = c.wrap(prio_label, c.YELLOW if not rule.is_default else c.DIM)
@@ -1326,8 +1329,10 @@ def _append_route_hop_lines(
                 continue
             lines.append(f"{indent}     TG: {ref.target_group_name}{weight}{summary}")
             for t in tg.targets if tg else []:
-                if t.downstream_lb is not None:
-                    continue  # 下流LBは以下の「転送先」で展開する
+                # 下流の ELB は、下の「転送先」で展開する。ヘルスチェックに通っていなければ、
+                # その状態と理由もここに出す（上流の TG から見た状態は、展開した側には出ない）
+                if t.downstream_lb is not None and not (tg and tg.needs_attention(t)):
+                    continue
                 reason = f" ({t.health_reason})" if t.health_reason else ""
                 lines.append(
                     f"{indent}       - {c.health_badge(t.health_state)} "

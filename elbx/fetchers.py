@@ -394,6 +394,14 @@ def _ecs_service_info(c_arn: str, svc: dict[str, Any], lb_cfg: dict[str, Any]) -
     )
 
 
+def _service_order(info: ECSTaskInfo) -> tuple[bool, str, str, str]:
+    """
+    同じ TG を使うサービスから 1 つを選ぶときの順（ACTIVE のサービスを先に、そのあとはクラスター
+    の ARN・サービス名・コンテナ名の順）。
+    """
+    return (info.last_status != "ACTIVE", info.cluster_arn, info.service_name, info.container_name)
+
+
 # awsvpc の ENI アタッチメントの details で IP を表す項目名
 _ECS_ATTACHMENT_IP_KEYS = ("privateIPv4Address", "privateIPv6Address", "ipv6Address")
 
@@ -618,8 +626,6 @@ class AWSFetcherMixin:
     _route53_zone_cache: tuple[float, list[tuple[dict[str, Any], list[dict[str, Any]]]]] | None = (
         None
     )
-    # 直近のゾーン走査でレコードを読めなかったゾーン（ゾーン ID -> 例外）。走査の前は None
-    _route53_zone_failures: dict[str, Exception] | None = None
     # ゾーン走査を 1 つずつにする（並行して進む下流の ELB の取得が、同じ走査を重ねて始めない
     # ように）。ELBClient は自分のものを作る
     _route53_lock: threading.Lock = threading.Lock()
@@ -1118,10 +1124,14 @@ class AWSFetcherMixin:
             ):
                 for svc in services.values():
                     for lb_cfg in svc.get("loadBalancers", []):
-                        if lb_cfg.get("targetGroupArn"):
-                            maps.by_tg_arn[lb_cfg["targetGroupArn"]] = _ecs_service_info(
-                                c_arn, svc, lb_cfg
-                            )
+                        tg_arn = lb_cfg.get("targetGroupArn")
+                        if not tg_arn:
+                            continue
+                        # 1 つの TG を複数のサービスが使っていても、AWS が返す順によらず選ぶ
+                        info = _ecs_service_info(c_arn, svc, lb_cfg)
+                        current = maps.by_tg_arn.get(tg_arn)
+                        if current is None or _service_order(info) < _service_order(current):
+                            maps.by_tg_arn[tg_arn] = info
 
                 for task in tasks:
                     task_info, task_ips, host_ports = _parse_ecs_task(c_arn, task, services)
@@ -1442,12 +1452,9 @@ class AWSFetcherMixin:
         :return: `{subnet_id: _parse_subnet_dict の辞書}`（取得できなければ空）
         """
         subnet_map: dict[str, dict[str, Any]] = {}
-        with tolerate_aws_errors("log.what.subnets"):
-            vpc_subnets = _collect_pages(
-                self.ec2.describe_subnets,
-                "Subnets",
-                Filters=[{"Name": "vpc-id", "Values": vpc_ids}],
-            )
+        for _chunk, vpc_subnets in self._filter_in_chunks(
+            self.ec2.describe_subnets, "Subnets", [("vpc-id", vpc_ids)], "log.what.subnets"
+        ):
             for sub in vpc_subnets:
                 s_id = sub.get("SubnetId", "")
                 if s_id:
@@ -1597,12 +1604,14 @@ class AWSFetcherMixin:
         return dict(pairs)
 
     def _fetch_zone_records(
-        self, hz: dict[str, Any]
+        self, hz: dict[str, Any], failures: dict[str, Exception] | None = None
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """
         単一Route53ホストゾーンのレコードセット一覧をページネーションしながら取得する。
 
         :param hz: `list_hosted_zones` が返すHostedZone辞書
+        :param failures: 読めなかったときに、ゾーン ID と例外を入れる辞書（呼び出しごとに持つ。
+            ほかのスレッドの呼び出しの失敗と混ざらないように）
         :return: `(hz, ResourceRecordSetsリスト)` のタプル
         """
         zone_id = hz.get("Id", "").split("/")[-1]
@@ -1617,7 +1626,6 @@ class AWSFetcherMixin:
             note_skipped("log.what.route53", exc, zone_id)
             # ホスト名から ELB を探す側が、「レコードがない」と「読めなかった」を
             # 見分けられるように残す
-            failures = self._route53_zone_failures
             if failures is not None:
                 failures[zone_id] = exc
         return hz, records
@@ -1640,7 +1648,6 @@ class AWSFetcherMixin:
             if self.route53 is None:
                 return []
             zones = self._fetch_hosted_zones()
-            self._route53_zone_failures = {}
             zone_results = self._parallel_map(self._fetch_zone_records, zones)
             self._route53_zone_cache = (now, zone_results)
             return zone_results
@@ -1679,7 +1686,7 @@ class AWSFetcherMixin:
 
     def _fetch_route53_zones_for_host(
         self, host: str
-    ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    ) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]]]], dict[str, Exception]]:
         """
         `host` の名前のレコードを持ちうるゾーンだけについて、レコードセットを取得する。
 
@@ -1688,15 +1695,17 @@ class AWSFetcherMixin:
         ゾーンの多いアカウントで、ホスト名 1 つのために全ゾーンのレコードを読まないため。
 
         :param host: 探すホスト名（正規化済みの小文字）
-        :return: `(HostedZone辞書, ResourceRecordSetsリスト)` のタプルリスト
+        :return: `(HostedZone辞書, ResourceRecordSetsリスト)` のタプルリストと、レコードを
+            読めなかったゾーン（ゾーン ID -> 例外）
         """
         zones = []
         for hz in self._fetch_hosted_zones():
             zone_name = _decode_route53_name(hz.get("Name", "")).lower()
             if host == zone_name or host.endswith(f".{zone_name}"):
                 zones.append(hz)
-        self._route53_zone_failures = {}
-        return self._parallel_map(self._fetch_zone_records, zones)
+        failures: dict[str, Exception] = {}
+        results = self._parallel_map(lambda hz: self._fetch_zone_records(hz, failures), zones)
+        return results, failures
 
     def _fetch_route53_records_by_dns(
         self,
