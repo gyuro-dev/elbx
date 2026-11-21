@@ -400,13 +400,15 @@ class TargetView:
         ターゲットのサブネット（種別を問わない。EC2 / ENI は1つ、ECS / Lambda / 下流の ELB は複数の
         こともある。IP だけのターゲットは CIDR にその IP を含むサブネット）。不明なら空。
         """
-        # 単一サブネットの EC2 / ENI を先に確認し、ECS / Lambda / ALB に続く
-        if self.ec2 and self.ec2.subnet:
-            return [self.ec2.subnet]
+        # ターゲットの IP を持つ ENI を先に見る。EC2 のサブネットはプライマリの ENI のものなので、
+        # セカンダリの ENI や awsvpc の ECS on EC2 のタスクの ENI（どちらも EC2 にアタッチされる）
+        # では違うことがある。ECS も、IP から特定したサブネットを持つので EC2 より先に見る
         if self.eni and self.eni.subnet:
             return [self.eni.subnet]
         if self.ecs and self.ecs.subnets:
             return list(self.ecs.subnets)
+        if self.ec2 and self.ec2.subnet:
+            return [self.ec2.subnet]
         if self.lambda_function and self.lambda_function.subnets:
             return list(self.lambda_function.subnets)
         if self.downstream_lb and self.downstream_lb.subnets:
@@ -428,12 +430,14 @@ class TargetView:
 
         ターゲットのセキュリティグループ（種別を問わない）。不明なら空。
         """
-        if self.ec2 and self.ec2.security_groups:
-            return list(self.ec2.security_groups)
+        # サブネットと同じく、EC2（プライマリの ENI の SG）は最後に見る。ECS の SG は、タスクの
+        # SG とタスクの ENI の SG を合わせたもの
         if self.ecs and self.ecs.security_groups:
             return list(self.ecs.security_groups)
         if self.eni and self.eni.security_groups:
             return list(self.eni.security_groups)
+        if self.ec2 and self.ec2.security_groups:
+            return list(self.ec2.security_groups)
         if self.lambda_function and self.lambda_function.security_groups:
             return list(self.lambda_function.security_groups)
         if self.downstream_lb and self.downstream_lb.security_groups:
@@ -718,6 +722,9 @@ class RuleView:
             "actions_summary": self.actions_summary,
             "target_group_refs": [ref.to_dict() for ref in self.target_group_refs],
             "condition_specs": list(self.condition_specs),
+            "redirect_config": (
+                dict(self.redirect_config) if self.redirect_config is not None else None
+            ),
         }
 
 

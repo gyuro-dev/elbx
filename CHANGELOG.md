@@ -30,6 +30,26 @@ incompatible change raises the minor version).
   order of `subnets` and `security_groups`). `ELBClient.list_load_balancers(names=...)` is
   sorted by name too.
 - Sorting the conditions of a rule no longer fails on a value it cannot compare.
+- The subnets and security groups of an IP target that belongs to a secondary network
+  interface of an EC2 instance, or to an ECS task in `awsvpc` mode on EC2, are those of that
+  interface or task. They were those of the instance's primary interface
+  (`TargetView.subnets` and `TargetView.security_groups`, the SUBNET and SG columns, `--json`).
+- The `elbx route` hint for a redirect with an empty `Query` no longer keeps the query of the
+  request, and an IPv6 address in the hint is written in brackets (`https://[2001:db8::1]/v1`).
+- `elbx route` shows a downstream load balancer that fails the health checks of the target group
+  in front of it, with the reason (`Target.Timeout` and so on). Only the count was shown.
+- `--color` and `--no-color` given on both sides of the subcommand (`elbx --color ls --no-color`)
+  are an error, as they are on the same side. `--color` was used.
+- `tree --full` labels an IAM server certificate `IAM Cert:` (it said `ACM Cert:`), and
+  `format_lb_tree()` draws the rules in priority order, as `format_lb_map()` does.
+- When several ECS services use the same target group, the one shown for a target whose task is
+  not found no longer depends on the order AWS returns them: an `ACTIVE` service first, then by
+  cluster ARN and service name.
+- `-j` / `max_workers` above 10 also raise the number of connections kept per AWS client
+  (botocore keeps 10, so the extra connections were closed and opened again).
+- Finding the load balancers of a host name from several threads with one `ELBClient` no longer
+  mixes up which Route 53 zones could not be read, and the subnets of more than 100 VPCs are read
+  in chunks, as the other EC2 lookups are.
 
 ## [0.2.0] - 2026-11-17
 

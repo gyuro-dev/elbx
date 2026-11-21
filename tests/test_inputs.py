@@ -140,6 +140,7 @@ def test_tree_options_work_without_subcommand(
         (["tree", "prod-web-alb", "-s", "web"], 2, "1 つに決める LB とは一緒に使えません"),
         (["targets", "--tg", "web-tg", "-s", "web"], 2, "1 つに決める --tg とは一緒に使えません"),
         (["-vp", "prod", "nope"], 2, "'nope' はコマンドではありません"),
+        (["--color", "ls", "--no-color"], 2, "引数 --no-color: 引数 --color とは一緒に使えません"),
     ],
     ids=[
         "typo",
@@ -159,6 +160,7 @@ def test_tree_options_work_without_subcommand(
         "search_with_one_load_balancer",
         "search_with_one_target_group",
         "value_of_a_short_option_is_not_the_command",
+        "color_and_no_color_around_the_subcommand",
     ],
 )
 def test_main_parser_keeps_its_own_arguments(
@@ -291,7 +293,7 @@ def test_clients_retry_throttling_more_than_the_botocore_default(
     """
     並列に呼ぶので、スロットリングは既定より多くやり直す。利用者が環境変数で決めた項目は変えない。
     """
-    events = SimpleNamespace(register=lambda *_args: None)
+    events = SimpleNamespace(register=lambda *_args: None, register_last=lambda *_args: None)
     configs: list[Any] = []
 
     class _Session:
@@ -304,6 +306,11 @@ def test_clients_retry_throttling_more_than_the_botocore_default(
     ELBClient(session=_Session())
     assert len(configs) == 6
     assert all(c.retries == {"mode": "standard", "total_max_attempts": 10} for c in configs)
+    # 接続の数は、同時に呼ぶ数の上限まで増やす（botocore の既定の 10 より減らさない）
+    assert all(c.max_pool_connections == 10 for c in configs)
+    configs.clear()
+    ELBClient(session=_Session(), max_workers=20)
+    assert all(c.max_pool_connections == 20 for c in configs)
 
     configs.clear()
     monkeypatch.setenv("AWS_RETRY_MODE", "adaptive")
@@ -971,7 +978,7 @@ def test_every_skipped_fetch_is_recorded(
 def test_failed_optional_client_is_recorded(elbx_warnings: pytest.LogCaptureFixture) -> None:
     """ECS などのクライアントを作れなくても続け、そのことを記録する。"""
 
-    events = SimpleNamespace(register=lambda *_args: None)
+    events = SimpleNamespace(register=lambda *_args: None, register_last=lambda *_args: None)
 
     class _Session:
         def client(self, service: str, **_kwargs: Any) -> Any:
@@ -1243,7 +1250,7 @@ def test_failed_command_also_notes_missing_details(
 
 def _session_stub(calls: list[dict[str, Any]], region_name: str | None = None) -> Any:
     """`client()` の引数を記録するだけの boto3.Session のスタブ。"""
-    events = SimpleNamespace(register=lambda *_args: None)
+    events = SimpleNamespace(register=lambda *_args: None, register_last=lambda *_args: None)
 
     def client(_service: str, **kwargs: Any) -> Any:
         calls.append(kwargs)
